@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS = {
   shippingCharge: 79,
   deliveryEstimate: "3\u20135 business days",
   deliveryAreasNote: "We currently deliver across India. Enter your pincode at checkout \u2014 we'll confirm serviceability by phone if needed.",
+  originsNote: "Kashmir, Iran, California, Afghanistan, Kerala, Jordan",
 };
 
 const SEED_PRODUCTS = [
@@ -324,6 +325,13 @@ export default function AmritStore() {
   };
 
   const getVariantIdx = (productId) => variantChoice[productId] || 0;
+  const uniqueCategoryTiles = useMemo(() => {
+    const seen = new Map();
+    for (const p of products) {
+      if (!seen.has(p.category)) seen.set(p.category, p);
+    }
+    return Array.from(seen.values());
+  }, [products]);
   const cartCount = useMemo(() => Object.values(cart).reduce((a, b) => a + b.qty, 0), [cart]);
   const cartItems = useMemo(() => Object.values(cart).filter((i) => i.qty > 0), [cart]);
   const subtotal = useMemo(() => cartItems.reduce((s, i) => s + i.price * i.qty, 0), [cartItems]);
@@ -462,8 +470,10 @@ export default function AmritStore() {
               </div>
             </div>
             <div className="border-t" style={{ borderColor: "rgba(242,233,208,0.15)" }}>
-              <div className="max-w-6xl mx-auto px-5 py-4 flex flex-wrap gap-x-8 gap-y-2" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: 1.5, color: "var(--ivory)", opacity: 0.75 }}>
-                <span>KASHMIR</span><span>IRAN</span><span>CALIFORNIA</span><span>AFGHANISTAN</span><span>KERALA</span><span>JORDAN</span>
+              <div className="max-w-6xl mx-auto px-5 py-4 flex flex-wrap gap-x-8 gap-y-2" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: 1.5, color: "var(--ivory)", opacity: 0.75, textTransform: "uppercase" }}>
+                {settings.originsNote.split(",").map((s) => s.trim()).filter(Boolean).map((s, i) => (
+                  <span key={i}>{s}</span>
+                ))}
               </div>
             </div>
           </section>
@@ -474,8 +484,8 @@ export default function AmritStore() {
               <button onClick={() => goTo("catalog")} className="text-sm underline amrit-focus">View all</button>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {products.map((p) => (
-                <button key={p.id} onClick={() => goTo("catalog")} className="amrit-card amrit-focus flex flex-col items-center gap-3 rounded-2xl p-5 border" style={{ background: "var(--cream)", borderColor: "rgba(33,29,26,0.1)" }}>
+              {uniqueCategoryTiles.map((p) => (
+                <button key={p.category} onClick={() => goTo("catalog")} className="amrit-card amrit-focus flex flex-col items-center gap-3 rounded-2xl p-5 border" style={{ background: "var(--cream)", borderColor: "rgba(33,29,26,0.1)" }}>
                   <Stamp product={p} />
                   <span className="text-sm font-medium text-center">{p.category}</span>
                 </button>
@@ -1022,6 +1032,10 @@ export default function AmritStore() {
                 <input value={settingsDraft.instagram} onChange={(e) => setSettingsDraft((s) => ({ ...s, instagram: e.target.value }))} placeholder="Instagram handle (e.g. @amrit.store)" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
                 <input value={settingsDraft.address} onChange={(e) => setSettingsDraft((s) => ({ ...s, address: e.target.value }))} placeholder="Business address" className="border rounded-lg px-3 py-2 text-sm amrit-focus sm:col-span-2" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
               </div>
+
+              <h3 className="font-semibold mt-6 mb-1">Storefront</h3>
+              <p className="text-xs mb-3" style={{ opacity: 0.6 }}>The sourcing regions shown as a strip on the homepage, under the hero. Comma-separated.</p>
+              <input value={settingsDraft.originsNote} onChange={(e) => setSettingsDraft((s) => ({ ...s, originsNote: e.target.value }))} placeholder="e.g. Kashmir, Iran, California" className="w-full border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
 
               <h3 className="font-semibold mt-6 mb-1">Legal &amp; compliance</h3>
               <p className="text-xs mb-3" style={{ opacity: 0.6 }}>An FSSAI number is required for food businesses in India — add it once issued.</p>
