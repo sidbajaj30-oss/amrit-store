@@ -116,10 +116,59 @@ function Stamp({ product, size = 76 }) {
   );
 }
 
-const emptyDraft = () => ({ id: null, name: "", category: "", origin: "", desc: "", image: "", variants: [{ label: "", price: "" }] });
+function ProductVideo({ url }) {
+  if (!url) return null;
+  const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([\w-]{6,})/);
+  if (ytMatch) {
+    return (
+      <div className="mt-3 rounded-xl overflow-hidden" style={{ aspectRatio: "16/9" }}>
+        <iframe
+          src={`https://www.youtube.com/embed/${ytMatch[1]}`}
+          title="Product video"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+          style={{ width: "100%", height: "100%", border: 0 }}
+        />
+      </div>
+    );
+  }
+  if (/\.(mp4|webm|mov)(\?.*)?$/i.test(url)) {
+    return (
+      <video controls className="mt-3 w-full rounded-xl" style={{ maxHeight: 320 }}>
+        <source src={url} />
+      </video>
+    );
+  }
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full amrit-focus" style={{ background: "var(--ink)", color: "var(--ivory)" }}>
+      Watch video &#8599;
+    </a>
+  );
+}
+
+function PriceTag({ variant, align = "right", size = "base" }) {
+  if (!variant) return <span className="font-semibold">—</span>;
+  const hasDiscount = variant.mrp && variant.mrp > variant.price;
+  const pct = hasDiscount ? Math.round((1 - variant.price / variant.mrp) * 100) : 0;
+  const priceSize = size === "sm" ? 14 : 16;
+  return (
+    <span className="flex flex-col" style={{ alignItems: align === "right" ? "flex-end" : "flex-start" }}>
+      {hasDiscount && (
+        <span className="flex items-center gap-1.5">
+          <span style={{ fontSize: 12, opacity: 0.5, textDecoration: "line-through" }}>{rupee(variant.mrp)}</span>
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ background: "var(--maroon)", color: "#fff" }}>{pct}% OFF</span>
+        </span>
+      )}
+      <span className="font-semibold whitespace-nowrap" style={{ fontSize: priceSize }}>{rupee(variant.price)}</span>
+    </span>
+  );
+}
+
+const emptyDraft = () => ({ id: null, name: "", category: "", origin: "", desc: "", image: "", videoUrl: "", variants: [{ label: "", price: "", mrp: "" }] });
 
 export default function AmritStore() {
   const [page, setPage] = useState("home");
+  const [categoryFilter, setCategoryFilter] = useState(null);
   const [products, setProducts] = useState(SEED_PRODUCTS);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [saveNote, setSaveNote] = useState("");
@@ -332,6 +381,10 @@ export default function AmritStore() {
     }
     return Array.from(seen.values());
   }, [products]);
+  const filteredProducts = useMemo(
+    () => (categoryFilter ? products.filter((p) => p.category === categoryFilter) : products),
+    [products, categoryFilter]
+  );
   const cartCount = useMemo(() => Object.values(cart).reduce((a, b) => a + b.qty, 0), [cart]);
   const cartItems = useMemo(() => Object.values(cart).filter((i) => i.qty > 0), [cart]);
   const subtotal = useMemo(() => cartItems.reduce((s, i) => s + i.price * i.qty, 0), [cartItems]);
@@ -343,7 +396,7 @@ export default function AmritStore() {
     const key = `${product.id}::${variantIdx}`;
     setCart((c) => ({
       ...c,
-      [key]: { key, id: product.id, name: product.name, category: product.category, origin: product.origin, label: v.label, price: v.price, qty: (c[key]?.qty || 0) + 1 },
+      [key]: { key, id: product.id, name: product.name, category: product.category, origin: product.origin, label: v.label, price: v.price, mrp: v.mrp || null, qty: (c[key]?.qty || 0) + 1 },
     }));
   };
   const setQty = (key, qty) => setCart((c) => (c[key] ? { ...c, [key]: { ...c[key], qty: Math.max(0, qty) } } : c));
@@ -372,16 +425,22 @@ export default function AmritStore() {
   };
 
   // --- Admin helpers ---
-  const startEdit = (p) => setDraft({ id: p.id, name: p.name, category: p.category, origin: p.origin, desc: p.desc, image: p.image || "", variants: p.variants.map((v) => ({ label: v.label, price: String(v.price) })) });
+  const startEdit = (p) => setDraft({ id: p.id, name: p.name, category: p.category, origin: p.origin, desc: p.desc, image: p.image || "", videoUrl: p.videoUrl || "", variants: p.variants.map((v) => ({ label: v.label, price: String(v.price), mrp: v.mrp ? String(v.mrp) : "" })) });
   const startNew = () => setDraft(emptyDraft());
   const updateDraftVariant = (idx, field, val) => setDraft((d) => ({ ...d, variants: d.variants.map((v, i) => (i === idx ? { ...v, [field]: val } : v)) }));
-  const addDraftVariant = () => setDraft((d) => ({ ...d, variants: [...d.variants, { label: "", price: "" }] }));
+  const addDraftVariant = () => setDraft((d) => ({ ...d, variants: [...d.variants, { label: "", price: "", mrp: "" }] }));
   const removeDraftVariant = (idx) => setDraft((d) => ({ ...d, variants: d.variants.filter((_, i) => i !== idx) }));
 
   const saveDraft = () => {
-    const cleanVariants = draft.variants.filter((v) => v.label.trim() && v.price !== "").map((v) => ({ label: v.label.trim(), price: Number(v.price) }));
+    const cleanVariants = draft.variants
+      .filter((v) => v.label.trim() && v.price !== "")
+      .map((v) => {
+        const price = Number(v.price);
+        const mrp = v.mrp !== "" ? Number(v.mrp) : null;
+        return { label: v.label.trim(), price, mrp: mrp && mrp > price ? mrp : null };
+      });
     if (!draft.name.trim() || cleanVariants.length === 0) return;
-    const cleaned = { id: draft.id || slug(draft.name), name: draft.name.trim(), category: draft.category.trim() || "Other", origin: draft.origin.trim() || "—", desc: draft.desc.trim(), image: draft.image || "", variants: cleanVariants };
+    const cleaned = { id: draft.id || slug(draft.name), name: draft.name.trim(), category: draft.category.trim() || "Other", origin: draft.origin.trim() || "—", desc: draft.desc.trim(), image: draft.image || "", videoUrl: draft.videoUrl.trim() || "", variants: cleanVariants };
     const next = draft.id ? products.map((p) => (p.id === draft.id ? cleaned : p)) : [...products, cleaned];
     saveCatalog(next);
     setDraft(emptyDraft());
@@ -417,7 +476,7 @@ export default function AmritStore() {
           </button>
           <nav className="hidden sm:flex items-center gap-7" style={{ fontSize: 14 }}>
             <button onClick={() => goTo("home")} className={`amrit-focus ${page === "home" ? "font-semibold" : ""}`}>Home</button>
-            <button onClick={() => goTo("catalog")} className={`amrit-focus ${page === "catalog" ? "font-semibold" : ""}`}>Shop</button>
+            <button onClick={() => { setCategoryFilter(null); goTo("catalog"); }} className={`amrit-focus ${page === "catalog" ? "font-semibold" : ""}`}>Shop</button>
             <button onClick={() => goTo("cart")} className="relative flex items-center gap-1.5 amrit-focus">
               <ShoppingBag size={17} />
               Cart
@@ -437,7 +496,7 @@ export default function AmritStore() {
         {navOpen && (
           <div className="sm:hidden flex flex-col px-5 pb-4 gap-3 border-t" style={{ borderColor: "rgba(33,29,26,0.1)" }}>
             <button className="text-left py-1" onClick={() => goTo("home")}>Home</button>
-            <button className="text-left py-1" onClick={() => goTo("catalog")}>Shop</button>
+            <button className="text-left py-1" onClick={() => { setCategoryFilter(null); goTo("catalog"); }}>Shop</button>
             <button className="text-left py-1" onClick={() => goTo("cart")}>Cart ({cartCount})</button>
             <button className="text-left py-1" onClick={() => goTo("admin")}>Manage products</button>
           </div>
@@ -456,7 +515,7 @@ export default function AmritStore() {
                 <p className="mt-5 max-w-md" style={{ opacity: 0.85, lineHeight: 1.7 }}>
                   The same trust as your neighbourhood store, now with sourcing you can actually see. Hand-sorted, lab-tested and fairly priced &mdash; from the makers of Sheetalam Mart.
                 </p>
-                <button onClick={() => goTo("catalog")} className="mt-8 inline-flex items-center gap-2 px-6 py-3 rounded-full amrit-focus" style={{ background: "var(--gold)", color: "var(--ink)", fontWeight: 700 }}>
+                <button onClick={() => { setCategoryFilter(null); goTo("catalog"); }} className="mt-8 inline-flex items-center gap-2 px-6 py-3 rounded-full amrit-focus" style={{ background: "var(--gold)", color: "var(--ink)", fontWeight: 700 }}>
                   Shop the collection <ArrowRight size={16} />
                 </button>
               </div>
@@ -481,11 +540,11 @@ export default function AmritStore() {
           <section className="max-w-6xl mx-auto px-5 py-16">
             <div className="flex items-baseline justify-between mb-8">
               <h2 style={{ fontFamily: "Fraunces, serif", fontSize: 30 }}>Shop by category</h2>
-              <button onClick={() => goTo("catalog")} className="text-sm underline amrit-focus">View all</button>
+              <button onClick={() => { setCategoryFilter(null); goTo("catalog"); }} className="text-sm underline amrit-focus">View all</button>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {uniqueCategoryTiles.map((p) => (
-                <button key={p.category} onClick={() => goTo("catalog")} className="amrit-card amrit-focus flex flex-col items-center gap-3 rounded-2xl p-5 border" style={{ background: "var(--cream)", borderColor: "rgba(33,29,26,0.1)" }}>
+                <button key={p.category} onClick={() => { setCategoryFilter(p.category); goTo("catalog"); }} className="amrit-card amrit-focus flex flex-col items-center gap-3 rounded-2xl p-5 border" style={{ background: "var(--cream)", borderColor: "rgba(33,29,26,0.1)" }}>
                   <Stamp product={p} />
                   <span className="text-sm font-medium text-center">{p.category}</span>
                 </button>
@@ -518,9 +577,30 @@ export default function AmritStore() {
             <h2 style={{ fontFamily: "Fraunces, serif", fontSize: 34 }}>Shop</h2>
             <button onClick={() => goTo("admin")} className="text-xs underline amrit-focus" style={{ opacity: 0.6 }}>Manage products</button>
           </div>
-          <p className="mt-2 text-sm" style={{ opacity: 0.7 }}>{catalogLoading ? "Loading catalog…" : `${products.length} products`}</p>
+          <p className="mt-2 text-sm" style={{ opacity: 0.7 }}>{catalogLoading ? "Loading catalog…" : `${filteredProducts.length} product${filteredProducts.length === 1 ? "" : "s"}${categoryFilter ? ` in ${categoryFilter}` : ""}`}</p>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              onClick={() => setCategoryFilter(null)}
+              className="text-xs px-3 py-1.5 rounded-full border amrit-focus"
+              style={{ borderColor: !categoryFilter ? "var(--ink)" : "rgba(33,29,26,0.2)", background: !categoryFilter ? "var(--ink)" : "transparent", color: !categoryFilter ? "var(--ivory)" : "inherit" }}
+            >
+              All
+            </button>
+            {uniqueCategoryTiles.map((p) => (
+              <button
+                key={p.category}
+                onClick={() => setCategoryFilter(p.category)}
+                className="text-xs px-3 py-1.5 rounded-full border amrit-focus"
+                style={{ borderColor: categoryFilter === p.category ? "var(--ink)" : "rgba(33,29,26,0.2)", background: categoryFilter === p.category ? "var(--ink)" : "transparent", color: categoryFilter === p.category ? "var(--ivory)" : "inherit" }}
+              >
+                {p.category}
+              </button>
+            ))}
+          </div>
+
           <div className="mt-8 grid sm:grid-cols-2 gap-5">
-            {products.map((p) => {
+            {filteredProducts.map((p) => {
               const vIdx = getVariantIdx(p.id);
               const v = p.variants[vIdx] || p.variants[0];
               return (
@@ -533,12 +613,17 @@ export default function AmritStore() {
                           <h3 className="font-semibold" style={{ fontFamily: "Fraunces, serif", fontSize: 18 }}>{p.name}</h3>
                           <p style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, opacity: 0.6 }}>{p.category}</p>
                         </div>
-                        <span className="font-semibold whitespace-nowrap">{v ? rupee(v.price) : "—"}</span>
+                        <PriceTag variant={v} />
                       </div>
                       <button onClick={() => setExpanded(expanded === p.id ? null : p.id)} className="mt-2 flex items-center gap-1 text-xs amrit-focus" style={{ opacity: 0.7 }}>
                         Details <ChevronDown size={13} style={{ transform: expanded === p.id ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
                       </button>
-                      {expanded === p.id && <p className="mt-2 text-sm" style={{ opacity: 0.8, lineHeight: 1.6 }}>{p.desc}</p>}
+                      {expanded === p.id && (
+                        <>
+                          <p className="mt-2 text-sm" style={{ opacity: 0.8, lineHeight: 1.6 }}>{p.desc}</p>
+                          <ProductVideo url={p.videoUrl} />
+                        </>
+                      )}
                       {p.variants.length > 1 && (
                         <div className="mt-3 flex flex-wrap gap-2">
                           {p.variants.map((vv, i) => (
@@ -581,7 +666,7 @@ export default function AmritStore() {
           {cartItems.length === 0 ? (
             <div className="mt-10 text-center py-16 border rounded-2xl" style={{ borderColor: "rgba(33,29,26,0.12)" }}>
               <p style={{ opacity: 0.7 }}>Your cart is empty.</p>
-              <button onClick={() => goTo("catalog")} className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 rounded-full font-medium amrit-focus" style={{ background: "var(--ink)", color: "var(--ivory)" }}>
+              <button onClick={() => { setCategoryFilter(null); goTo("catalog"); }} className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 rounded-full font-medium amrit-focus" style={{ background: "var(--ink)", color: "var(--ivory)" }}>
                 Browse products <ArrowRight size={15} />
               </button>
             </div>
@@ -593,7 +678,12 @@ export default function AmritStore() {
                     <Stamp product={i} />
                     <div className="flex-1">
                       <h4 className="font-semibold">{i.name}</h4>
-                      <p className="text-xs" style={{ opacity: 0.6 }}>{i.label} &middot; {rupee(i.price)} each</p>
+                      <p className="text-xs flex items-center gap-1.5" style={{ opacity: 0.6 }}>
+                        <span>{i.label}</span>
+                        <span>&middot;</span>
+                        {i.mrp && i.mrp > i.price && <span style={{ textDecoration: "line-through", opacity: 0.7 }}>{rupee(i.mrp)}</span>}
+                        <span>{rupee(i.price)} each</span>
+                      </p>
                     </div>
                     <div className="flex items-center gap-3 rounded-full border px-3 py-1.5" style={{ borderColor: "rgba(33,29,26,0.15)" }}>
                       <button onClick={() => setQty(i.key, i.qty - 1)} className="amrit-focus"><Minus size={14} /></button>
@@ -880,7 +970,27 @@ export default function AmritStore() {
               <h3 className="font-semibold mb-4">{draft.id ? "Edit product" : "Add new product"}</h3>
               <div className="flex flex-col gap-3">
                 <input value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="Product name" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
-                <input value={draft.category} onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))} placeholder="Category (e.g. Almonds)" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                <select
+                  value={uniqueCategoryTiles.some((p) => p.category === draft.category) ? draft.category : (draft.category ? "__new__" : "")}
+                  onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value === "__new__" ? "" : e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm amrit-focus"
+                  style={{ borderColor: "rgba(33,29,26,0.2)" }}
+                >
+                  <option value="" disabled>Select category</option>
+                  {uniqueCategoryTiles.map((p) => (
+                    <option key={p.category} value={p.category}>{p.category}</option>
+                  ))}
+                  <option value="__new__">+ Add new category</option>
+                </select>
+                {(!uniqueCategoryTiles.some((p) => p.category === draft.category)) && (
+                  <input
+                    value={draft.category}
+                    onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))}
+                    placeholder="New category name"
+                    className="border rounded-lg px-3 py-2 text-sm amrit-focus"
+                    style={{ borderColor: "rgba(33,29,26,0.2)" }}
+                  />
+                )}
                 <input value={draft.origin} onChange={(e) => setDraft((d) => ({ ...d, origin: e.target.value }))} placeholder="Origin code (e.g. CAL-11)" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
                 <textarea value={draft.desc} onChange={(e) => setDraft((d) => ({ ...d, desc: e.target.value }))} placeholder="Description" rows={3} className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
 
@@ -904,16 +1014,31 @@ export default function AmritStore() {
                   Photos are compressed and stored with the product automatically. No image also works fine — it falls back to a simple letter badge.
                 </p>
 
-                <p className="text-xs font-medium mt-1" style={{ opacity: 0.7 }}>Variants (weight &amp; price)</p>
+                <p className="text-xs font-medium mt-1" style={{ opacity: 0.7 }}>Product video (optional)</p>
+                <input
+                  value={draft.videoUrl}
+                  onChange={(e) => setDraft((d) => ({ ...d, videoUrl: e.target.value }))}
+                  placeholder="YouTube, Instagram Reel, or direct video link"
+                  className="border rounded-lg px-3 py-2 text-sm amrit-focus"
+                  style={{ borderColor: "rgba(33,29,26,0.2)" }}
+                />
+                <p className="text-xs" style={{ opacity: 0.5, lineHeight: 1.5 }}>
+                  Paste a link — a YouTube link plays inline, a direct .mp4 link plays inline, and an Instagram Reel
+                  shows a "Watch video" button that opens it. Leave blank if you don't have one yet.
+                </p>
+
+                <p className="text-xs font-medium mt-1" style={{ opacity: 0.7 }}>Variants (weight, price &amp; optional MRP for sale)</p>
                 {draft.variants.map((v, i) => (
                   <div key={i} className="flex gap-2 items-center">
                     <input value={v.label} onChange={(e) => updateDraftVariant(i, "label", e.target.value)} placeholder="e.g. 500g" className="border rounded-lg px-3 py-2 text-sm amrit-focus flex-1" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
-                    <input value={v.price} onChange={(e) => updateDraftVariant(i, "price", e.target.value.replace(/[^0-9]/g, ""))} placeholder="Price ₹" className="border rounded-lg px-3 py-2 text-sm amrit-focus w-24" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                    <input value={v.mrp} onChange={(e) => updateDraftVariant(i, "mrp", e.target.value.replace(/[^0-9]/g, ""))} placeholder="MRP (optional)" title="Original price, shown struck-through if higher than the selling price" className="border rounded-lg px-3 py-2 text-sm amrit-focus w-28" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                    <input value={v.price} onChange={(e) => updateDraftVariant(i, "price", e.target.value.replace(/[^0-9]/g, ""))} placeholder="Sale price ₹" className="border rounded-lg px-3 py-2 text-sm amrit-focus w-24" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
                     {draft.variants.length > 1 && (
                       <button onClick={() => removeDraftVariant(i)} className="amrit-focus" style={{ opacity: 0.5 }}><X size={16} /></button>
                     )}
                   </div>
                 ))}
+                <p className="text-xs" style={{ opacity: 0.5 }}>Leave MRP blank if there's no discount — the price will just show normally.</p>
                 <button onClick={addDraftVariant} className="text-xs underline text-left amrit-focus" style={{ opacity: 0.7 }}>+ Add another variant</button>
 
                 <div className="flex gap-2 mt-2">
@@ -937,7 +1062,7 @@ export default function AmritStore() {
                       <h4 className="font-semibold">{p.name}</h4>
                       <p className="text-xs" style={{ opacity: 0.6 }}>{p.category} &middot; {p.origin}</p>
                       <p className="text-xs mt-1" style={{ opacity: 0.75 }}>
-                        {p.variants.map((v) => `${v.label}: ${rupee(v.price)}`).join(" · ")}
+                        {p.variants.map((v) => v.mrp && v.mrp > v.price ? `${v.label}: ${rupee(v.price)} (was ${rupee(v.mrp)})` : `${v.label}: ${rupee(v.price)}`).join(" · ")}
                       </p>
                     </div>
                     <button onClick={() => startEdit(p)} className="text-xs underline amrit-focus">Edit</button>
