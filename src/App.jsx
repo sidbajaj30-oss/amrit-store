@@ -17,6 +17,9 @@ const DEFAULT_SETTINGS = {
   deliveryAreasNote: "We currently deliver across India. Enter your pincode at checkout \u2014 we'll confirm serviceability by phone if needed.",
   originsNote: "Kashmir, Iran, California, Afghanistan, Kerala, Jordan",
   clarityId: "",
+  aboutPhoto: "",
+  aboutTitle: "Our Story",
+  aboutStory: "",
 };
 
 const SEED_PRODUCTS = [
@@ -519,6 +522,24 @@ export default function AmritStore() {
     }
   };
 
+  const [aboutImageProcessing, setAboutImageProcessing] = useState(false);
+  const [aboutImageError, setAboutImageError] = useState("");
+  const handleAboutImageFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAboutImageError("");
+    setAboutImageProcessing(true);
+    try {
+      const dataUrl = await compressImage(file, 800, 0.78);
+      setSettingsDraft((s) => ({ ...s, aboutPhoto: dataUrl }));
+    } catch (err) {
+      setAboutImageError("Could not process that image — try a different file.");
+    } finally {
+      setAboutImageProcessing(false);
+      e.target.value = "";
+    }
+  };
+
   const saveBannerDraft = () => {
     if (!bannerDraft.image) return;
     const cleaned = { ...bannerDraft, id: bannerDraft.id || slug(bannerDraft.title || "banner") };
@@ -646,6 +667,7 @@ export default function AmritStore() {
           <nav className="hidden sm:flex items-center gap-7" style={{ fontSize: 14 }}>
             <button onClick={() => goTo("home")} className={`amrit-focus ${page === "home" ? "font-semibold" : ""}`}>Home</button>
             <button onClick={() => { setCategoryFilter(null); goTo("catalog"); }} className={`amrit-focus ${page === "catalog" ? "font-semibold" : ""}`}>Shop</button>
+            <button onClick={() => goTo("about")} className={`amrit-focus ${page === "about" ? "font-semibold" : ""}`}>About</button>
             <button onClick={() => goTo("cart")} className="relative flex items-center gap-1.5 amrit-focus">
               <ShoppingBag size={17} />
               Cart
@@ -666,6 +688,7 @@ export default function AmritStore() {
           <div className="sm:hidden flex flex-col px-5 pb-4 gap-3 border-t" style={{ borderColor: "rgba(33,29,26,0.1)" }}>
             <button className="text-left py-1" onClick={() => goTo("home")}>Home</button>
             <button className="text-left py-1" onClick={() => { setCategoryFilter(null); goTo("catalog"); }}>Shop</button>
+            <button className="text-left py-1" onClick={() => goTo("about")}>About</button>
             <button className="text-left py-1" onClick={() => goTo("cart")}>Cart ({cartCount})</button>
             <button className="text-left py-1" onClick={() => goTo("admin")}>Manage products</button>
           </div>
@@ -986,6 +1009,30 @@ export default function AmritStore() {
           <button onClick={() => goTo("home")} className="mt-8 inline-flex items-center gap-2 px-6 py-3 rounded-full font-semibold amrit-focus" style={{ background: "var(--gold)", color: "var(--ink)" }}>
             Continue shopping <ArrowRight size={16} />
           </button>
+        </section>
+      )}
+
+      {page === "about" && (
+        <section className="max-w-4xl mx-auto px-5 py-14">
+          <h2 style={{ fontFamily: "Fraunces, serif", fontSize: 34 }}>{settings.aboutTitle || "Our Story"}</h2>
+          <div className="mt-8 grid sm:grid-cols-2 gap-10 items-start">
+            <div>
+              {settings.aboutPhoto ? (
+                <img src={settings.aboutPhoto} alt={settings.aboutTitle || "Amrit"} className="w-full rounded-2xl" style={{ aspectRatio: "4/5", objectFit: "cover" }} />
+              ) : (
+                <div className="w-full rounded-2xl flex items-center justify-center border" style={{ aspectRatio: "4/5", borderColor: "rgba(33,29,26,0.15)", background: "var(--cream)" }}>
+                  <LogoMark size={90} />
+                </div>
+              )}
+            </div>
+            <div className="text-sm" style={{ lineHeight: 1.8, opacity: 0.85 }}>
+              {settings.aboutStory ? (
+                settings.aboutStory.split("\n").filter(Boolean).map((para, i) => <p key={i} className="mb-4">{para}</p>)
+              ) : (
+                <p style={{ opacity: 0.6 }}>The Amrit story isn't written yet — add it in Manage &rarr; Settings &rarr; About Us.</p>
+              )}
+            </div>
+          </div>
         </section>
       )}
 
@@ -1432,6 +1479,28 @@ export default function AmritStore() {
               <input value={settingsDraft.deliveryEstimate} onChange={(e) => setSettingsDraft((s) => ({ ...s, deliveryEstimate: e.target.value }))} placeholder="Delivery time estimate (e.g. 3–5 business days)" className="mt-3 w-full border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
               <textarea value={settingsDraft.deliveryAreasNote} onChange={(e) => setSettingsDraft((s) => ({ ...s, deliveryAreasNote: e.target.value }))} placeholder="Delivery areas note" rows={2} className="mt-3 w-full border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
 
+              <h3 className="font-semibold mt-6 mb-1">About Us</h3>
+              <p className="text-xs mb-3" style={{ opacity: 0.6, lineHeight: 1.5 }}>
+                Shown on the "About" page — a photo and your brand's story, linked from the footer and nav.
+              </p>
+              <div className="flex items-center gap-3 mb-3">
+                {settingsDraft.aboutPhoto && (
+                  <img src={settingsDraft.aboutPhoto} alt="" style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 12 }} />
+                )}
+                <div>
+                  <label className="text-xs px-3 py-2 rounded-full border inline-block cursor-pointer amrit-focus" style={{ borderColor: "rgba(33,29,26,0.25)" }}>
+                    {aboutImageProcessing ? "Processing…" : settingsDraft.aboutPhoto ? "Replace photo" : "Upload photo"}
+                    <input type="file" accept="image/*" onChange={handleAboutImageFile} className="hidden" />
+                  </label>
+                  {settingsDraft.aboutPhoto && (
+                    <button onClick={() => setSettingsDraft((s) => ({ ...s, aboutPhoto: "" }))} className="ml-2 text-xs underline amrit-focus" style={{ opacity: 0.6 }}>Remove</button>
+                  )}
+                  {aboutImageError && <p className="text-xs mt-1" style={{ color: "var(--maroon)" }}>{aboutImageError}</p>}
+                </div>
+              </div>
+              <input value={settingsDraft.aboutTitle} onChange={(e) => setSettingsDraft((s) => ({ ...s, aboutTitle: e.target.value }))} placeholder="Heading (e.g. Our Story)" className="w-full border rounded-lg px-3 py-2 text-sm amrit-focus mb-3" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+              <textarea value={settingsDraft.aboutStory} onChange={(e) => setSettingsDraft((s) => ({ ...s, aboutStory: e.target.value }))} placeholder="Tell customers how Amrit started, what it means to you, and why they can trust it. A few paragraphs is plenty." rows={6} className="w-full border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+
               <h3 className="font-semibold mt-6 mb-1">Analytics</h3>
               <p className="text-xs mb-3" style={{ opacity: 0.6, lineHeight: 1.5 }}>
                 Add a free Microsoft Clarity project to see heatmaps and session recordings of real visitors — where
@@ -1481,6 +1550,7 @@ export default function AmritStore() {
 
           <div className="flex flex-col gap-1.5 text-xs" style={{ opacity: 0.75 }}>
             <span className="uppercase tracking-wide mb-1" style={{ fontSize: 11, opacity: 0.5 }}>Policies</span>
+            <button onClick={() => goTo("about")} className="text-left underline amrit-focus" style={{ opacity: 0.85 }}>About Us</button>
             <button onClick={() => goTo("privacy")} className="text-left underline amrit-focus" style={{ opacity: 0.85 }}>Privacy Policy</button>
             <button onClick={() => goTo("terms")} className="text-left underline amrit-focus" style={{ opacity: 0.85 }}>Terms &amp; Conditions</button>
             <button onClick={() => goTo("refunds")} className="text-left underline amrit-focus" style={{ opacity: 0.85 }}>Shipping &amp; Refunds</button>
