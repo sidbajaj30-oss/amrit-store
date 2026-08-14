@@ -231,6 +231,43 @@ function BannerCarousel({ banners }) {
   );
 }
 
+function NutritionPanel({ nutrition, keyNutrients }) {
+  const facts = [
+    { label: "Calories", key: "calories", unit: "kcal" },
+    { label: "Protein", key: "protein", unit: "g" },
+    { label: "Fat", key: "fat", unit: "g" },
+    { label: "Carbs", key: "carbs", unit: "g" },
+    { label: "Fiber", key: "fiber", unit: "g" },
+  ];
+  const hasFacts = nutrition && facts.some((f) => nutrition[f.key] !== undefined && nutrition[f.key] !== null);
+  const tags = (keyNutrients || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!hasFacts && tags.length === 0) return null;
+  return (
+    <div className="mt-3 rounded-xl border p-3" style={{ borderColor: "rgba(33,29,26,0.12)" }}>
+      {hasFacts && (
+        <>
+          <p className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ opacity: 0.55 }}>Nutrition, per 100g</p>
+          <div className="grid grid-cols-5 gap-1 text-center">
+            {facts.map((f) => (
+              <div key={f.key}>
+                <div className="font-semibold text-sm">{nutrition[f.key] !== undefined && nutrition[f.key] !== null ? nutrition[f.key] : "—"}</div>
+                <div className="text-[10px]" style={{ opacity: 0.55 }}>{f.label}{nutrition[f.key] !== undefined && nutrition[f.key] !== null ? ` ${f.unit}` : ""}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {tags.length > 0 && (
+        <div className={`flex flex-wrap gap-1.5 ${hasFacts ? "mt-3 pt-3 border-t" : ""}`} style={{ borderColor: "rgba(33,29,26,0.1)" }}>
+          {tags.map((t, i) => (
+            <span key={i} className="text-[11px] px-2 py-1 rounded-full" style={{ background: "var(--cream)", border: "1px solid rgba(33,29,26,0.12)" }}>{t}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PriceTag({ variant, align = "right", size = "base" }) {
   if (!variant) return <span className="font-semibold">—</span>;
   const hasDiscount = variant.mrp && variant.mrp > variant.price;
@@ -249,8 +286,10 @@ function PriceTag({ variant, align = "right", size = "base" }) {
   );
 }
 
-const emptyDraft = () => ({ id: null, name: "", category: "", origin: "", desc: "", image: "", videoUrl: "", variants: [{ label: "", price: "", mrp: "" }] });
+const emptyNutrition = () => ({ calories: "", protein: "", fat: "", carbs: "", fiber: "" });
+const emptyDraft = () => ({ id: null, name: "", category: "", origin: "", desc: "", image: "", videoUrl: "", nutrition: emptyNutrition(), keyNutrients: "", variants: [{ label: "", price: "", mrp: "" }] });
 const emptyBannerDraft = () => ({ id: null, image: "", title: "", subtitle: "", ctaText: "", ctaLink: "" });
+const emptyRecipeDraft = () => ({ id: null, image: "", title: "", desc: "" });
 
 export default function AmritStore() {
   const [page, setPage] = useState("home");
@@ -556,6 +595,71 @@ export default function AmritStore() {
     if (bannerDraft.id === id) setBannerDraft(emptyBannerDraft());
   };
 
+  // Recipes / "Ways to enjoy" section
+  const [recipes, setRecipes] = useState([]);
+  const [recipesLoading, setRecipesLoading] = useState(true);
+  const [recipeDraft, setRecipeDraft] = useState(emptyRecipeDraft());
+  const [recipeImageProcessing, setRecipeImageProcessing] = useState(false);
+  const [recipeImageError, setRecipeImageError] = useState("");
+  const [recipeSaveNote, setRecipeSaveNote] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get("recipes", true);
+        const loaded = res ? JSON.parse(res.value) : null;
+        setRecipes(Array.isArray(loaded) ? loaded : []);
+      } catch (e) {
+        setRecipes([]);
+      } finally {
+        setRecipesLoading(false);
+      }
+    })();
+  }, []);
+
+  const saveRecipes = async (next) => {
+    setRecipes(next);
+    try {
+      await window.storage.set("recipes", JSON.stringify(next), true);
+      setRecipeSaveNote("Saved");
+    } catch (e) {
+      setRecipeSaveNote("Could not save — check connection and try again");
+    }
+    setTimeout(() => setRecipeSaveNote(""), 2000);
+  };
+
+  const handleRecipeImageFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setRecipeImageError("");
+    setRecipeImageProcessing(true);
+    try {
+      const dataUrl = await compressImage(file, 700, 0.75);
+      setRecipeDraft((d) => ({ ...d, image: dataUrl }));
+    } catch (err) {
+      setRecipeImageError("Could not process that image — try a different file.");
+    } finally {
+      setRecipeImageProcessing(false);
+      e.target.value = "";
+    }
+  };
+
+  const saveRecipeDraft = () => {
+    if (!recipeDraft.title.trim()) return;
+    const cleaned = { ...recipeDraft, id: recipeDraft.id || slug(recipeDraft.title) };
+    const next = recipeDraft.id && recipes.some((r) => r.id === recipeDraft.id)
+      ? recipes.map((r) => (r.id === cleaned.id ? cleaned : r))
+      : [...recipes, cleaned];
+    saveRecipes(next);
+    setRecipeDraft(emptyRecipeDraft());
+  };
+
+  const startEditRecipe = (r) => setRecipeDraft({ ...r });
+  const deleteRecipe = (id) => {
+    saveRecipes(recipes.filter((r) => r.id !== id));
+    if (recipeDraft.id === id) setRecipeDraft(emptyRecipeDraft());
+  };
+
   const getVariantIdx = (productId) => variantChoice[productId] || 0;
   const uniqueCategoryTiles = useMemo(() => {
     const seen = new Map();
@@ -608,7 +712,7 @@ export default function AmritStore() {
   };
 
   // --- Admin helpers ---
-  const startEdit = (p) => setDraft({ id: p.id, name: p.name, category: p.category, origin: p.origin, desc: p.desc, image: p.image || "", videoUrl: p.videoUrl || "", variants: p.variants.map((v) => ({ label: v.label, price: String(v.price), mrp: v.mrp ? String(v.mrp) : "" })) });
+  const startEdit = (p) => setDraft({ id: p.id, name: p.name, category: p.category, origin: p.origin, desc: p.desc, image: p.image || "", videoUrl: p.videoUrl || "", nutrition: { ...emptyNutrition(), ...(p.nutrition || {}) }, keyNutrients: p.keyNutrients || "", variants: p.variants.map((v) => ({ label: v.label, price: String(v.price), mrp: v.mrp ? String(v.mrp) : "" })) });
   const startNew = () => setDraft(emptyDraft());
   const updateDraftVariant = (idx, field, val) => setDraft((d) => ({ ...d, variants: d.variants.map((v, i) => (i === idx ? { ...v, [field]: val } : v)) }));
   const addDraftVariant = () => setDraft((d) => ({ ...d, variants: [...d.variants, { label: "", price: "", mrp: "" }] }));
@@ -623,7 +727,9 @@ export default function AmritStore() {
         return { label: v.label.trim(), price, mrp: mrp && mrp > price ? mrp : null };
       });
     if (!draft.name.trim() || cleanVariants.length === 0) return;
-    const cleaned = { id: draft.id || slug(draft.name), name: draft.name.trim(), category: draft.category.trim() || "Other", origin: draft.origin.trim() || "—", desc: draft.desc.trim(), image: draft.image || "", videoUrl: draft.videoUrl.trim() || "", variants: cleanVariants };
+    const cleanNutrition = {};
+    Object.entries(draft.nutrition).forEach(([k, v]) => { if (v !== "") cleanNutrition[k] = Number(v); });
+    const cleaned = { id: draft.id || slug(draft.name), name: draft.name.trim(), category: draft.category.trim() || "Other", origin: draft.origin.trim() || "—", desc: draft.desc.trim(), image: draft.image || "", videoUrl: draft.videoUrl.trim() || "", nutrition: cleanNutrition, keyNutrients: draft.keyNutrients.trim(), variants: cleanVariants };
     const next = draft.id ? products.map((p) => (p.id === draft.id ? cleaned : p)) : [...products, cleaned];
     saveCatalog(next);
     setDraft(emptyDraft());
@@ -749,6 +855,28 @@ export default function AmritStore() {
             </div>
           </section>
 
+          {recipes.length > 0 && (
+            <section className="border-t" style={{ borderColor: "rgba(33,29,26,0.1)" }}>
+              <div className="max-w-6xl mx-auto px-5 py-16">
+                <h2 style={{ fontFamily: "Fraunces, serif", fontSize: 30 }}>Ways to enjoy</h2>
+                <p className="mt-2 text-sm" style={{ opacity: 0.65 }}>A few ideas using what's in your kitchen already.</p>
+                <div className="mt-8 grid sm:grid-cols-3 gap-5">
+                  {recipes.map((r, i) => (
+                    <Reveal key={r.id} delay={i * 80}>
+                      <div className="rounded-2xl overflow-hidden border amrit-card" style={{ borderColor: "rgba(33,29,26,0.1)", background: "var(--cream)" }}>
+                        {r.image && <img src={r.image} alt={r.title} style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block" }} />}
+                        <div className="p-4">
+                          <h3 className="font-semibold" style={{ fontFamily: "Fraunces, serif", fontSize: 17 }}>{r.title}</h3>
+                          {r.desc && <p className="mt-1 text-sm" style={{ opacity: 0.75, lineHeight: 1.5 }}>{r.desc}</p>}
+                        </div>
+                      </div>
+                    </Reveal>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
+
           <section className="border-t" style={{ borderColor: "rgba(33,29,26,0.1)" }}>
             <div className="max-w-6xl mx-auto px-5 py-16 grid sm:grid-cols-2 lg:grid-cols-4 gap-8">
               {[
@@ -767,6 +895,31 @@ export default function AmritStore() {
               ))}
             </div>
           </section>
+
+          {settings.instagram && (
+            <section style={{ background: "var(--ink)", color: "var(--ivory)" }}>
+              <div className="max-w-6xl mx-auto px-5 py-14 flex flex-col items-center text-center">
+                <Reveal>
+                  <>
+                    <LogoMark size={44} />
+                    <h2 className="mt-4" style={{ fontFamily: "Fraunces, serif", fontSize: 28 }}>Join the Fam</h2>
+                    <p className="mt-2 text-sm max-w-md" style={{ opacity: 0.8 }}>
+                      New arrivals, behind-the-scenes from the shop, and the occasional discount — all on Instagram.
+                    </p>
+                    <a
+                      href={`https://instagram.com/${settings.instagram.replace(/^@/, "")}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-6 inline-flex items-center gap-2 px-6 py-3 rounded-full font-semibold amrit-focus"
+                      style={{ background: "var(--gold)", color: "var(--ink)" }}
+                    >
+                      Follow {settings.instagram}
+                    </a>
+                  </>
+                </Reveal>
+              </div>
+            </section>
+          )}
         </>
       )}
 
@@ -804,9 +957,13 @@ export default function AmritStore() {
               const v = p.variants[vIdx] || p.variants[0];
               return (
                 <Reveal key={p.id} delay={Math.min(pIdx * 50, 300)}>
-                <div className="amrit-card rounded-2xl border p-5" style={{ background: "var(--cream)", borderColor: "rgba(33,29,26,0.1)" }}>
+                <div className="amrit-card rounded-2xl border overflow-hidden" style={{ background: "var(--cream)", borderColor: "rgba(33,29,26,0.1)" }}>
+                  {p.image && (
+                    <img src={p.image} alt={p.name} style={{ width: "100%", aspectRatio: "16/10", objectFit: "cover", display: "block" }} />
+                  )}
+                  <div className="p-5">
                   <div className="flex gap-4">
-                    <Stamp product={p} />
+                    {!p.image && <Stamp product={p} />}
                     <div className="flex-1">
                       <div className="flex items-start justify-between gap-2">
                         <div>
@@ -822,6 +979,7 @@ export default function AmritStore() {
                         <>
                           <p className="mt-2 text-sm" style={{ opacity: 0.8, lineHeight: 1.6 }}>{p.desc}</p>
                           <ProductVideo url={p.videoUrl} />
+                          <NutritionPanel nutrition={p.nutrition} keyNutrients={p.keyNutrients} />
                         </>
                       )}
                       {p.variants.length > 1 && (
@@ -852,6 +1010,7 @@ export default function AmritStore() {
                         )}
                       </div>
                     </div>
+                  </div>
                   </div>
                 </div>
                 </Reveal>
@@ -1188,6 +1347,13 @@ export default function AmritStore() {
               Banners
             </button>
             <button
+              onClick={() => setAdminTab("recipes")}
+              className="px-4 py-2 text-sm font-medium amrit-focus"
+              style={{ borderBottom: adminTab === "recipes" ? "2px solid var(--gold)" : "2px solid transparent", opacity: adminTab === "recipes" ? 1 : 0.6 }}
+            >
+              Recipes
+            </button>
+            <button
               onClick={() => setAdminTab("settings")}
               className="px-4 py-2 text-sm font-medium amrit-focus"
               style={{ borderBottom: adminTab === "settings" ? "2px solid var(--gold)" : "2px solid transparent", opacity: adminTab === "settings" ? 1 : 0.6 }}
@@ -1257,6 +1423,19 @@ export default function AmritStore() {
                 <p className="text-xs" style={{ opacity: 0.5, lineHeight: 1.5 }}>
                   Paste a link — a YouTube link plays inline, a direct .mp4 link plays inline, and an Instagram Reel
                   shows a "Watch video" button that opens it. Leave blank if you don't have one yet.
+                </p>
+
+                <p className="text-xs font-medium mt-1" style={{ opacity: 0.7 }}>Nutrition (optional, per 100g)</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={draft.nutrition.calories} onChange={(e) => setDraft((d) => ({ ...d, nutrition: { ...d.nutrition, calories: e.target.value.replace(/[^0-9.]/g, "") } }))} placeholder="Calories (kcal)" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  <input value={draft.nutrition.protein} onChange={(e) => setDraft((d) => ({ ...d, nutrition: { ...d.nutrition, protein: e.target.value.replace(/[^0-9.]/g, "") } }))} placeholder="Protein (g)" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  <input value={draft.nutrition.fat} onChange={(e) => setDraft((d) => ({ ...d, nutrition: { ...d.nutrition, fat: e.target.value.replace(/[^0-9.]/g, "") } }))} placeholder="Fat (g)" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  <input value={draft.nutrition.carbs} onChange={(e) => setDraft((d) => ({ ...d, nutrition: { ...d.nutrition, carbs: e.target.value.replace(/[^0-9.]/g, "") } }))} placeholder="Carbs (g)" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  <input value={draft.nutrition.fiber} onChange={(e) => setDraft((d) => ({ ...d, nutrition: { ...d.nutrition, fiber: e.target.value.replace(/[^0-9.]/g, "") } }))} placeholder="Fiber (g)" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                </div>
+                <input value={draft.keyNutrients} onChange={(e) => setDraft((d) => ({ ...d, keyNutrients: e.target.value }))} placeholder="Key nutrients, comma separated (e.g. Vitamin E, Magnesium, Healthy Fats)" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                <p className="text-xs" style={{ opacity: 0.5, lineHeight: 1.5 }}>
+                  Leave any of this blank if you don't have exact figures yet — it simply won't show on the product.
                 </p>
 
                 <p className="text-xs font-medium mt-1" style={{ opacity: 0.7 }}>Variants (weight, price &amp; optional MRP for sale)</p>
@@ -1428,6 +1607,67 @@ export default function AmritStore() {
                           </div>
                           <button onClick={() => startEditBanner(b)} className="text-xs underline amrit-focus">Edit</button>
                           <button onClick={() => deleteBanner(b.id)} className="amrit-focus" style={{ opacity: 0.5 }}><Trash2 size={16} /></button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {adminTab === "recipes" && (
+            <div className="mt-8">
+              <p className="text-sm mb-1" style={{ opacity: 0.7, lineHeight: 1.6 }}>
+                Simple ideas for using your products — shown on the homepage as "Ways to enjoy." Builds trust and gives customers a reason to buy more than one thing.
+              </p>
+              <div className="text-xs mb-6" style={{ fontFamily: "'IBM Plex Mono', monospace", opacity: 0.55 }}>
+                {recipeSaveNote || (recipesLoading ? "Loading…" : "")}
+              </div>
+
+              <div className="grid sm:grid-cols-5 gap-8">
+                <div className="sm:col-span-2 border rounded-2xl p-5" style={{ borderColor: "rgba(33,29,26,0.12)", background: "var(--cream)" }}>
+                  <h3 className="font-semibold mb-4">{recipeDraft.id ? "Edit idea" : "Add new idea"}</h3>
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      {recipeDraft.image && (
+                        <img src={recipeDraft.image} alt="" className="w-full rounded-lg mb-2" style={{ aspectRatio: "4/3", objectFit: "cover" }} />
+                      )}
+                      <label className="text-xs px-3 py-2 rounded-full border inline-block cursor-pointer amrit-focus" style={{ borderColor: "rgba(33,29,26,0.25)" }}>
+                        {recipeImageProcessing ? "Processing…" : recipeDraft.image ? "Replace photo" : "Upload photo"}
+                        <input type="file" accept="image/*" onChange={handleRecipeImageFile} className="hidden" />
+                      </label>
+                      {recipeImageError && <p className="text-xs mt-1" style={{ color: "var(--maroon)" }}>{recipeImageError}</p>}
+                    </div>
+                    <input value={recipeDraft.title} onChange={(e) => setRecipeDraft((d) => ({ ...d, title: e.target.value }))} placeholder="Title (e.g. Almond &amp; Date Energy Balls)" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                    <textarea value={recipeDraft.desc} onChange={(e) => setRecipeDraft((d) => ({ ...d, desc: e.target.value }))} placeholder="One or two lines describing it" rows={3} className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={saveRecipeDraft} disabled={!recipeDraft.title.trim()} className="flex-1 py-2.5 rounded-full font-semibold text-sm amrit-focus disabled:opacity-40" style={{ background: "var(--ink)", color: "var(--ivory)" }}>
+                        {recipeDraft.id ? "Save changes" : "Add idea"}
+                      </button>
+                      {recipeDraft.id && (
+                        <button onClick={() => setRecipeDraft(emptyRecipeDraft())} className="px-4 py-2.5 rounded-full text-sm border amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }}>Cancel</button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="sm:col-span-3">
+                  <h3 className="font-semibold mb-4">Current ideas ({recipes.length})</h3>
+                  {recipes.length === 0 ? (
+                    <p className="text-sm" style={{ opacity: 0.6 }}>Nothing added yet — add a simple serving idea to get started.</p>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {recipes.map((r) => (
+                        <div key={r.id} className="border rounded-xl p-3 flex items-center gap-4" style={{ borderColor: "rgba(33,29,26,0.12)" }}>
+                          {r.image && <img src={r.image} alt="" style={{ width: 64, height: 48, objectFit: "cover", borderRadius: 8 }} />}
+                          <div className="flex-1">
+                            <h4 className="font-semibold text-sm">{r.title}</h4>
+                            <p className="text-xs" style={{ opacity: 0.6 }}>{r.desc}</p>
+                          </div>
+                          <button onClick={() => startEditRecipe(r)} className="text-xs underline amrit-focus">Edit</button>
+                          <button onClick={() => deleteRecipe(r.id)} className="amrit-focus" style={{ opacity: 0.5 }}><Trash2 size={16} /></button>
                         </div>
                       ))}
                     </div>
