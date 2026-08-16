@@ -398,75 +398,88 @@ export default function AmritStore() {
     }
   };
 
-  // Admin auth state
-  const [adminAuthed, setAdminAuthed] = useState(false);
-  const [adminHash, setAdminHash] = useState(null); // null = still loading, "" = no password set yet
-  const [authLoading, setAuthLoading] = useState(true);
-  const [pwInput, setPwInput] = useState("");
-  const [pwConfirm, setPwConfirm] = useState("");
+  // Team accounts (Owner + Staff roles)
+  const [teamMembers, setTeamMembers] = useState(null); // null = still loading
+  const [teamLoading, setTeamLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState(null); // session only: { id, name, username, role }
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [authError, setAuthError] = useState("");
-  const [showChangePw, setShowChangePw] = useState(false);
-  const [newPw, setNewPw] = useState("");
-  const [newPwConfirm, setNewPwConfirm] = useState("");
-  const [changePwError, setChangePwError] = useState("");
-  const [changePwNote, setChangePwNote] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [ownerUsername, setOwnerUsername] = useState("");
+  const [ownerPw, setOwnerPw] = useState("");
+  const [ownerPwConfirm, setOwnerPwConfirm] = useState("");
+  const [newMember, setNewMember] = useState({ name: "", username: "", password: "", role: "staff" });
+  const [teamError, setTeamError] = useState("");
+  const [teamNote, setTeamNote] = useState("");
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await window.storage.get("admin_pass_hash", true);
-        setAdminHash(res ? res.value : "");
+        const res = await window.storage.get("team_members", true);
+        const loaded = res ? JSON.parse(res.value) : null;
+        setTeamMembers(Array.isArray(loaded) ? loaded : []);
       } catch (e) {
-        setAdminHash("");
+        setTeamMembers([]);
       } finally {
-        setAuthLoading(false);
+        setTeamLoading(false);
       }
     })();
   }, []);
 
-  const handleSetPassword = async () => {
-    setAuthError("");
-    if (pwInput.length < 6) { setAuthError("Use at least 6 characters."); return; }
-    if (pwInput !== pwConfirm) { setAuthError("Passwords don't match."); return; }
-    const hash = await sha256Hex(pwInput);
+  const saveTeamMembers = async (next) => {
+    setTeamMembers(next);
     try {
-      await window.storage.set("admin_pass_hash", hash, true);
-      setAdminHash(hash);
-      setAdminAuthed(true);
-      setPwInput(""); setPwConfirm("");
-    } catch (e) {
-      setAuthError("Could not save the password — check connection and try again.");
-    }
+      await window.storage.set("team_members", JSON.stringify(next), true);
+    } catch (e) { /* best-effort */ }
+  };
+
+  const createOwnerAccount = async () => {
+    setAuthError("");
+    if (!ownerName.trim() || !ownerUsername.trim()) { setAuthError("Fill in your name and a username."); return; }
+    if (ownerPw.length < 6) { setAuthError("Use at least 6 characters for the password."); return; }
+    if (ownerPw !== ownerPwConfirm) { setAuthError("Passwords don't match."); return; }
+    const hash = await sha256Hex(ownerPw);
+    const owner = { id: slug(ownerUsername), name: ownerName.trim(), username: ownerUsername.trim().toLowerCase(), passwordHash: hash, role: "owner" };
+    await saveTeamMembers([owner]);
+    setCurrentUser(owner);
+    setOwnerName(""); setOwnerUsername(""); setOwnerPw(""); setOwnerPwConfirm("");
   };
 
   const handleLogin = async () => {
     setAuthError("");
-    const hash = await sha256Hex(pwInput);
-    if (hash === adminHash) {
-      setAdminAuthed(true);
-      setPwInput("");
+    const hash = await sha256Hex(loginPassword);
+    const match = (teamMembers || []).find((m) => m.username === loginUsername.trim().toLowerCase() && m.passwordHash === hash);
+    if (match) {
+      setCurrentUser(match);
+      setLoginUsername(""); setLoginPassword("");
     } else {
-      setAuthError("Incorrect password.");
+      setAuthError("Incorrect username or password.");
     }
   };
 
-  const handleChangePassword = async () => {
-    setChangePwError(""); setChangePwNote("");
-    if (newPw.length < 6) { setChangePwError("Use at least 6 characters."); return; }
-    if (newPw !== newPwConfirm) { setChangePwError("Passwords don't match."); return; }
-    const hash = await sha256Hex(newPw);
-    try {
-      await window.storage.set("admin_pass_hash", hash, true);
-      setAdminHash(hash);
-      setChangePwNote("Password updated.");
-      setNewPw(""); setNewPwConfirm("");
-      setTimeout(() => setShowChangePw(false), 1200);
-    } catch (e) {
-      setChangePwError("Could not save — try again.");
-    }
+  const handleLogout = () => { setCurrentUser(null); setLoginUsername(""); setLoginPassword(""); };
+
+  const addTeamMember = async () => {
+    setTeamError("");
+    if (!newMember.name.trim() || !newMember.username.trim()) { setTeamError("Fill in name and username."); return; }
+    if (newMember.password.length < 6) { setTeamError("Use at least 6 characters for the password."); return; }
+    const uname = newMember.username.trim().toLowerCase();
+    if ((teamMembers || []).some((m) => m.username === uname)) { setTeamError("That username is already taken."); return; }
+    const hash = await sha256Hex(newMember.password);
+    const member = { id: slug(uname) + "_" + Date.now(), name: newMember.name.trim(), username: uname, passwordHash: hash, role: newMember.role };
+    await saveTeamMembers([...(teamMembers || []), member]);
+    setNewMember({ name: "", username: "", password: "", role: "staff" });
+    setTeamNote("Added");
+    setTimeout(() => setTeamNote(""), 2000);
   };
 
-  const handleLogout = () => { setAdminAuthed(false); setPwInput(""); };
+  const removeTeamMember = (id) => {
+    const owners = (teamMembers || []).filter((m) => m.role === "owner");
+    const target = (teamMembers || []).find((m) => m.id === id);
+    if (target?.role === "owner" && owners.length <= 1) { setTeamError("Can't remove the only owner account."); return; }
+    saveTeamMembers((teamMembers || []).filter((m) => m.id !== id));
+  };
 
   // Load catalog from persistent storage on mount, seed it if empty
   useEffect(() => {
@@ -506,6 +519,9 @@ export default function AmritStore() {
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [adminTab, setAdminTab] = useState("products");
+  useEffect(() => {
+    if (currentUser?.role === "staff" && adminTab !== "products") setAdminTab("products");
+  }, [currentUser, adminTab]);
 
   useEffect(() => {
     (async () => {
@@ -1555,79 +1571,58 @@ export default function AmritStore() {
 
       {page === "admin" && (
         <section className="max-w-4xl mx-auto px-5 py-12">
-          {authLoading ? (
+          {teamLoading ? (
             <p className="text-sm" style={{ opacity: 0.6 }}>Loading…</p>
-          ) : !adminAuthed ? (
+          ) : !currentUser ? (
             <div className="max-w-sm mx-auto py-16">
               <div className="flex justify-center mb-5"><LogoMark size={52} /></div>
-              <h2 className="text-center" style={{ fontFamily: "Fraunces, serif", fontSize: 26 }}>
-                {adminHash ? "Admin login" : "Set an admin password"}
-              </h2>
-              <p className="mt-2 text-sm text-center" style={{ opacity: 0.7, lineHeight: 1.6 }}>
-                {adminHash
-                  ? "Enter the password to manage products."
-                  : "No password is set yet. Choose one now — you'll need it every time you want to edit products."}
-              </p>
-              <input
-                type="password"
-                value={pwInput}
-                onChange={(e) => setPwInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && (adminHash ? handleLogin() : pwConfirm && handleSetPassword())}
-                placeholder="Password"
-                className="mt-5 w-full border rounded-lg px-3 py-2.5 text-sm amrit-focus"
-                style={{ borderColor: "rgba(33,29,26,0.2)" }}
-              />
-              {!adminHash && (
-                <input
-                  type="password"
-                  value={pwConfirm}
-                  onChange={(e) => setPwConfirm(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSetPassword()}
-                  placeholder="Confirm password"
-                  className="mt-3 w-full border rounded-lg px-3 py-2.5 text-sm amrit-focus"
-                  style={{ borderColor: "rgba(33,29,26,0.2)" }}
-                />
+              {(teamMembers || []).length === 0 ? (
+                <>
+                  <h2 className="text-center" style={{ fontFamily: "Fraunces, serif", fontSize: 26 }}>Create your owner account</h2>
+                  <p className="mt-2 text-sm text-center" style={{ opacity: 0.7, lineHeight: 1.6 }}>
+                    No account is set up yet. This first account has full access — you can add team members with limited access afterward.
+                  </p>
+                  <input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} placeholder="Your name" className="mt-5 w-full border rounded-lg px-3 py-2.5 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  <input value={ownerUsername} onChange={(e) => setOwnerUsername(e.target.value)} placeholder="Choose a username" className="mt-3 w-full border rounded-lg px-3 py-2.5 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  <input type="password" value={ownerPw} onChange={(e) => setOwnerPw(e.target.value)} placeholder="Password" className="mt-3 w-full border rounded-lg px-3 py-2.5 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  <input type="password" value={ownerPwConfirm} onChange={(e) => setOwnerPwConfirm(e.target.value)} onKeyDown={(e) => e.key === "Enter" && createOwnerAccount()} placeholder="Confirm password" className="mt-3 w-full border rounded-lg px-3 py-2.5 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  {authError && <p className="mt-2 text-xs" style={{ color: "var(--maroon)" }}>{authError}</p>}
+                  <button onClick={createOwnerAccount} className="mt-4 w-full py-2.5 rounded-full font-semibold text-sm amrit-focus" style={{ background: "var(--ink)", color: "var(--ivory)" }}>
+                    Create account &amp; continue
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-center" style={{ fontFamily: "Fraunces, serif", fontSize: 26 }}>Sign in</h2>
+                  <p className="mt-2 text-sm text-center" style={{ opacity: 0.7, lineHeight: 1.6 }}>Enter your username and password to manage the store.</p>
+                  <input value={loginUsername} onChange={(e) => setLoginUsername(e.target.value)} placeholder="Username" className="mt-5 w-full border rounded-lg px-3 py-2.5 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  <input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleLogin()} placeholder="Password" className="mt-3 w-full border rounded-lg px-3 py-2.5 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  {authError && <p className="mt-2 text-xs" style={{ color: "var(--maroon)" }}>{authError}</p>}
+                  <button onClick={handleLogin} className="mt-4 w-full py-2.5 rounded-full font-semibold text-sm amrit-focus" style={{ background: "var(--ink)", color: "var(--ivory)" }}>
+                    Sign in
+                  </button>
+                </>
               )}
-              {authError && <p className="mt-2 text-xs" style={{ color: "var(--maroon)" }}>{authError}</p>}
-              <button
-                onClick={adminHash ? handleLogin : handleSetPassword}
-                className="mt-4 w-full py-2.5 rounded-full font-semibold text-sm amrit-focus"
-                style={{ background: "var(--ink)", color: "var(--ivory)" }}
-              >
-                {adminHash ? "Unlock" : "Set password & continue"}
-              </button>
               <p className="mt-4 text-xs text-center" style={{ opacity: 0.5, lineHeight: 1.5 }}>
-                This is a basic password gate for this preview, not full account security. Real access control comes with the backend.
+                This is a practical access gate for this preview, not database-level security. Good for keeping your team organised, not for handling highly sensitive data.
               </p>
             </div>
           ) : (
             <>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 style={{ fontFamily: "Fraunces, serif", fontSize: 30 }}>Manage products</h2>
+              <h2 style={{ fontFamily: "Fraunces, serif", fontSize: 30 }}>Manage {currentUser.role === "staff" ? "products" : "store"}</h2>
               <p className="mt-2 text-sm" style={{ opacity: 0.7, lineHeight: 1.6 }}>
-                Add real products and weight/price variants here. Changes save automatically and appear on the Shop page for anyone visiting this link.
+                Signed in as <strong>{currentUser.name}</strong> ({currentUser.role === "owner" ? "Owner" : "Staff"}).
               </p>
             </div>
-            <div className="flex flex-col items-end gap-1 text-xs shrink-0" style={{ opacity: 0.7 }}>
-              <button onClick={() => setShowChangePw((v) => !v)} className="underline amrit-focus">Change password</button>
-              <button onClick={handleLogout} className="underline amrit-focus">Log out</button>
-            </div>
+            <button onClick={handleLogout} className="text-xs underline amrit-focus shrink-0" style={{ opacity: 0.7 }}>Log out</button>
           </div>
-          {showChangePw && (
-            <div className="mt-3 border rounded-xl p-4 max-w-sm" style={{ borderColor: "rgba(33,29,26,0.15)" }}>
-              <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="New password" className="w-full border rounded-lg px-3 py-2 text-sm amrit-focus mb-2" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
-              <input type="password" value={newPwConfirm} onChange={(e) => setNewPwConfirm(e.target.value)} placeholder="Confirm new password" className="w-full border rounded-lg px-3 py-2 text-sm amrit-focus mb-2" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
-              {changePwError && <p className="text-xs mb-2" style={{ color: "var(--maroon)" }}>{changePwError}</p>}
-              {changePwNote && <p className="text-xs mb-2" style={{ color: "var(--gold)" }}>{changePwNote}</p>}
-              <button onClick={handleChangePassword} className="text-sm px-4 py-2 rounded-full font-medium amrit-focus" style={{ background: "var(--ink)", color: "var(--ivory)" }}>Update password</button>
-            </div>
-          )}
           <div className="mt-2 text-xs" style={{ fontFamily: "'IBM Plex Mono', monospace", opacity: 0.55 }}>
             {saveNote || (catalogLoading ? "Loading…" : "")}
           </div>
 
-          <div className="mt-6 flex gap-2 border-b" style={{ borderColor: "rgba(33,29,26,0.12)" }}>
+          <div className="mt-6 flex gap-2 border-b flex-wrap" style={{ borderColor: "rgba(33,29,26,0.12)" }}>
             <button
               onClick={() => setAdminTab("products")}
               className="px-4 py-2 text-sm font-medium amrit-focus"
@@ -1635,6 +1630,8 @@ export default function AmritStore() {
             >
               Products
             </button>
+            {currentUser.role === "owner" && (
+              <>
             <button
               onClick={() => setAdminTab("orders")}
               className="relative px-4 py-2 text-sm font-medium amrit-focus"
@@ -1670,12 +1667,21 @@ export default function AmritStore() {
               )}
             </button>
             <button
+              onClick={() => setAdminTab("team")}
+              className="px-4 py-2 text-sm font-medium amrit-focus"
+              style={{ borderBottom: adminTab === "team" ? "2px solid var(--gold)" : "2px solid transparent", opacity: adminTab === "team" ? 1 : 0.6 }}
+            >
+              Team
+            </button>
+            <button
               onClick={() => setAdminTab("settings")}
               className="px-4 py-2 text-sm font-medium amrit-focus"
               style={{ borderBottom: adminTab === "settings" ? "2px solid var(--gold)" : "2px solid transparent", opacity: adminTab === "settings" ? 1 : 0.6 }}
             >
               Settings
             </button>
+              </>
+            )}
           </div>
 
           {adminTab === "products" && (
@@ -1793,7 +1799,9 @@ export default function AmritStore() {
                       </p>
                     </div>
                     <button onClick={() => startEdit(p)} className="text-xs underline amrit-focus">Edit</button>
-                    <button onClick={() => deleteProduct(p.id)} className="amrit-focus" style={{ opacity: 0.5 }}><Trash2 size={16} /></button>
+                    {currentUser.role === "owner" && (
+                      <button onClick={() => deleteProduct(p.id)} className="amrit-focus" style={{ opacity: 0.5 }}><Trash2 size={16} /></button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2037,6 +2045,51 @@ export default function AmritStore() {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {adminTab === "team" && (
+            <div className="mt-8 max-w-2xl">
+              <p className="text-sm mb-1" style={{ opacity: 0.7, lineHeight: 1.6 }}>
+                Give your team their own logins. <strong>Staff</strong> can add and edit products but can't delete them,
+                and can't see Orders, Banners, Recipes, Reviews, or Settings. <strong>Owner</strong> has full access, same as you.
+              </p>
+              <div className="text-xs mb-6" style={{ fontFamily: "'IBM Plex Mono', monospace", opacity: 0.55 }}>
+                {teamNote}
+              </div>
+
+              <div className="border rounded-2xl p-5 mb-8" style={{ borderColor: "rgba(33,29,26,0.12)", background: "var(--cream)" }}>
+                <h3 className="font-semibold mb-4">Add team member</h3>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <input value={newMember.name} onChange={(e) => setNewMember((m) => ({ ...m, name: e.target.value }))} placeholder="Name" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  <input value={newMember.username} onChange={(e) => setNewMember((m) => ({ ...m, username: e.target.value }))} placeholder="Username" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  <input type="password" value={newMember.password} onChange={(e) => setNewMember((m) => ({ ...m, password: e.target.value }))} placeholder="Temporary password" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                  <select value={newMember.role} onChange={(e) => setNewMember((m) => ({ ...m, role: e.target.value }))} className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }}>
+                    <option value="staff">Staff — add/edit products only</option>
+                    <option value="owner">Owner — full access</option>
+                  </select>
+                </div>
+                {teamError && <p className="text-xs mt-2" style={{ color: "var(--maroon)" }}>{teamError}</p>}
+                <button onClick={addTeamMember} className="mt-3 px-5 py-2.5 rounded-full font-semibold text-sm amrit-focus" style={{ background: "var(--ink)", color: "var(--ivory)" }}>
+                  Add member
+                </button>
+                <p className="mt-2 text-xs" style={{ opacity: 0.5, lineHeight: 1.5 }}>Share the username and this temporary password with them directly — they can't see it again here.</p>
+              </div>
+
+              <h3 className="font-semibold mb-4">Team ({(teamMembers || []).length})</h3>
+              <div className="flex flex-col gap-3">
+                {(teamMembers || []).map((m) => (
+                  <div key={m.id} className="border rounded-xl p-4 flex items-center gap-4" style={{ borderColor: "rgba(33,29,26,0.12)" }}>
+                    <div className="flex-1">
+                      <h4 className="font-semibold text-sm">{m.name} {m.id === currentUser.id && <span style={{ opacity: 0.5, fontWeight: 400 }}>(you)</span>}</h4>
+                      <p className="text-xs" style={{ opacity: 0.6 }}>@{m.username} &middot; {m.role === "owner" ? "Owner" : "Staff"}</p>
+                    </div>
+                    {m.id !== currentUser.id && (
+                      <button onClick={() => removeTeamMember(m.id)} className="amrit-focus" style={{ opacity: 0.5 }}><Trash2 size={16} /></button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
