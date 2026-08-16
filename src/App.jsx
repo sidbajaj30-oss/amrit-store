@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS = {
   deliveryEstimate: "3\u20135 business days",
   deliveryAreasNote: "We currently deliver across India. Enter your pincode at checkout \u2014 we'll confirm serviceability by phone if needed.",
   originsNote: "Kashmir, Iran, California, Afghanistan, Kerala, Jordan",
+  heroImages: [],
   clarityId: "",
   aboutPhoto: "",
   aboutTitle: "Our Story",
@@ -78,10 +79,13 @@ function LogoMark({ size = 40, ring = true }) {
   );
 }
 
-function HeroShowcase({ products }) {
-  const heroProducts = (products || []).filter((p) => p.image).slice(0, 3);
+function HeroShowcase({ products, heroImages }) {
+  const curated = (heroImages || []).filter(Boolean);
+  const showcaseItems = curated.length > 0
+    ? curated.map((img, i) => ({ id: "hero_" + i, image: img, name: "Amrit" }))
+    : (products || []).filter((p) => p.image).slice(0, 4);
 
-  if (heroProducts.length === 0) {
+  if (showcaseItems.length === 0) {
     return (
       <div className="relative flex justify-center items-center h-64">
         <div
@@ -95,9 +99,10 @@ function HeroShowcase({ products }) {
   }
 
   const positions = [
-    { top: "6%", left: "4%", size: 148, rotate: -7, delay: "0s" },
-    { top: "36%", left: "40%", size: 172, rotate: 5, delay: "0.6s" },
-    { top: "0%", left: "60%", size: 128, rotate: 9, delay: "1.2s" },
+    { top: "4%", left: "2%", size: 140, rotate: -7, delay: "0s" },
+    { top: "34%", left: "38%", size: 164, rotate: 5, delay: "0.6s" },
+    { top: "0%", left: "60%", size: 122, rotate: 9, delay: "1.2s" },
+    { top: "42%", left: "70%", size: 108, rotate: -5, delay: "1.8s" },
   ];
 
   return (
@@ -106,7 +111,7 @@ function HeroShowcase({ products }) {
         className="amrit-blob-drift"
         style={{ position: "absolute", top: "14%", left: "18%", width: 260, height: 260, borderRadius: "50%", background: "radial-gradient(circle, rgba(201,162,39,0.22) 0%, rgba(201,162,39,0) 70%)" }}
       />
-      {heroProducts.map((p, i) => {
+      {showcaseItems.map((p, i) => {
         const pos = positions[i] || positions[0];
         return (
           <div key={p.id} style={{ position: "absolute", top: pos.top, left: pos.left, transform: `rotate(${pos.rotate}deg)` }}>
@@ -360,7 +365,7 @@ const emptyRecipeDraft = () => ({ id: null, image: "", title: "", desc: "" });
 const emptyReviewForm = () => ({ name: "", rating: 5, text: "", image: "" });
 
 export default function AmritStore() {
-  const [page, setPage] = useState("home");
+  const [page, setPage] = useState(() => (typeof window !== "undefined" && window.location.hash === "#manage" ? "admin" : "home"));
   const [categoryFilter, setCategoryFilter] = useState(null);
   const [products, setProducts] = useState(SEED_PRODUCTS);
   const [catalogLoading, setCatalogLoading] = useState(true);
@@ -647,6 +652,30 @@ export default function AmritStore() {
     }
   };
 
+  const [heroImageProcessing, setHeroImageProcessing] = useState(false);
+  const [heroImageError, setHeroImageError] = useState("");
+  const handleHeroImageFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setHeroImageError("");
+    if ((settingsDraft.heroImages || []).length >= 4) {
+      setHeroImageError("Remove one first — up to 4 hero photos.");
+      e.target.value = "";
+      return;
+    }
+    setHeroImageProcessing(true);
+    try {
+      const dataUrl = await compressImage(file, 700, 0.75);
+      setSettingsDraft((s) => ({ ...s, heroImages: [...(s.heroImages || []), dataUrl] }));
+    } catch (err) {
+      setHeroImageError("Could not process that image — try a different file.");
+    } finally {
+      setHeroImageProcessing(false);
+      e.target.value = "";
+    }
+  };
+  const removeHeroImage = (idx) => setSettingsDraft((s) => ({ ...s, heroImages: s.heroImages.filter((_, i) => i !== idx) }));
+
   const saveBannerDraft = () => {
     if (!bannerDraft.image) return;
     const cleaned = { ...bannerDraft, id: bannerDraft.id || slug(bannerDraft.title || "banner") };
@@ -828,7 +857,15 @@ export default function AmritStore() {
     }));
   };
   const setQty = (key, qty) => setCart((c) => (c[key] ? { ...c, [key]: { ...c[key], qty: Math.max(0, qty) } } : c));
-  const goTo = (p) => { setPage(p); setNavOpen(false); window.scrollTo?.(0, 0); };
+  const goTo = (p) => {
+    setPage(p);
+    setNavOpen(false);
+    window.scrollTo?.(0, 0);
+    if (typeof window !== "undefined") {
+      if (p === "admin") window.location.hash = "manage";
+      else if (window.location.hash === "#manage") history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  };
 
   const placeOrder = () => {
     setPlacing(true);
@@ -937,12 +974,6 @@ export default function AmritStore() {
                 <span className="absolute -top-2 -right-3 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center" style={{ background: "var(--maroon)" }}>{cartCount}</span>
               )}
             </button>
-            <button onClick={() => goTo("admin")} className={`relative flex items-center gap-1.5 amrit-focus ${page === "admin" ? "font-semibold" : ""}`} style={{ opacity: 0.7 }}>
-              <Settings size={15} /> Manage
-              {newOrderCount > 0 && (
-                <span className="absolute -top-2 -right-3 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center" style={{ background: "var(--maroon)" }}>{newOrderCount}</span>
-              )}
-            </button>
           </nav>
           <button className="sm:hidden amrit-focus" onClick={() => setNavOpen((v) => !v)}><Menu size={20} /></button>
         </div>
@@ -952,7 +983,6 @@ export default function AmritStore() {
             <button className="text-left py-1" onClick={() => { setCategoryFilter(null); goTo("catalog"); }}>Shop</button>
             <button className="text-left py-1" onClick={() => goTo("about")}>About</button>
             <button className="text-left py-1" onClick={() => goTo("cart")}>Cart ({cartCount})</button>
-            <button className="text-left py-1" onClick={() => goTo("admin")}>Manage products</button>
           </div>
         )}
       </header>
@@ -964,9 +994,9 @@ export default function AmritStore() {
             <div className="amrit-ambient-glow" style={{ position: "absolute", top: "-10%", left: "55%", width: 420, height: 420, borderRadius: "50%", background: "radial-gradient(circle, rgba(201,162,39,0.16) 0%, rgba(201,162,39,0) 70%)", pointerEvents: "none" }} />
             <div className="max-w-6xl mx-auto px-5 pt-16 pb-20 grid sm:grid-cols-2 gap-12 items-center relative">
               <div>
-                <p style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: 2, color: "var(--gold)" }}>SOURCED AT ORIGIN &middot; SEALED AT PACKING</p>
+                <p style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: 2, color: "var(--gold)" }}>CAREFULLY SELECTED &middot; SEALED FOR FRESHNESS</p>
                 <h1 style={{ fontFamily: "Fraunces, serif", fontSize: "clamp(40px,6.5vw,62px)", lineHeight: 1.06, marginTop: 14, fontWeight: 600 }}>
-                  Quality you can taste.<br />Sourcing you can see.
+                  Premium Dry Fruits &amp; Berries,<br />Uncompromising quality in every bite.
                 </h1>
                 <p className="mt-5 max-w-md" style={{ opacity: 0.85, lineHeight: 1.7 }}>
                   Hand-sorted, lab-tested dry fruits and berries — fairly priced, the way a trusted neighbourhood store always has. From the makers of Sheetalam Mart.
@@ -975,7 +1005,7 @@ export default function AmritStore() {
                   Shop the collection <ArrowRight size={16} />
                 </button>
               </div>
-              <HeroShowcase products={products} />
+              <HeroShowcase products={products} heroImages={settings.heroImages} />
             </div>
             <div className="border-t" style={{ borderColor: "rgba(242,233,208,0.15)" }}>
               <div className="max-w-6xl mx-auto px-5 py-4 flex flex-wrap gap-x-8 gap-y-2" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: 1.5, color: "var(--ivory)", opacity: 0.75, textTransform: "uppercase" }}>
@@ -1031,7 +1061,7 @@ export default function AmritStore() {
             <div className="max-w-6xl mx-auto px-5 py-16 grid sm:grid-cols-2 lg:grid-cols-4 gap-8">
               {[
                 { t: "Hand-sorted", d: "Every batch is picked over by hand for size, colour and moisture before it's bagged.", tone: "gold" },
-                { t: "Sealed at source", d: "Packed at origin within days of harvest, not months after in a warehouse.", tone: "saffron" },
+                { t: "Sealed for Freshness", d: "Every batch is quality-checked and sealed at our facility soon after it arrives — never left sitting for months.", tone: "saffron" },
                 { t: "Lab-tested", d: "Each category is tested for aflatoxin and pesticide residue before listing.", tone: "maroon" },
                 { t: "Fairly priced", d: "No premium markup for the sake of it — honest pricing, the way a trusted local shop prices things.", tone: "gold" },
               ].map((f, i) => (
@@ -1104,10 +1134,7 @@ export default function AmritStore() {
 
       {page === "catalog" && (
         <section className="max-w-6xl mx-auto px-5 py-12">
-          <div className="flex items-baseline justify-between">
-            <h2 style={{ fontFamily: "Fraunces, serif", fontSize: 34 }}>Shop</h2>
-            <button onClick={() => goTo("admin")} className="text-xs underline amrit-focus" style={{ opacity: 0.6 }}>Manage products</button>
-          </div>
+          <h2 style={{ fontFamily: "Fraunces, serif", fontSize: 34 }}>Shop</h2>
 
           {!categoryFilter ? (
             <>
@@ -1166,7 +1193,7 @@ export default function AmritStore() {
                 <Reveal key={p.id} delay={Math.min(pIdx * 50, 300)}>
                 <div className="amrit-card rounded-2xl border overflow-hidden" style={{ background: "var(--cream)", borderColor: "rgba(33,29,26,0.1)" }}>
                   {p.image && (
-                    <img src={p.image} alt={p.name} style={{ width: "100%", height: 180, objectFit: "cover", display: "block" }} />
+                    <img src={p.image} alt={p.name} style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block" }} />
                   )}
                   <div className="p-5">
                   <div className="flex gap-4">
@@ -2032,6 +2059,29 @@ export default function AmritStore() {
               <h3 className="font-semibold mt-6 mb-1">Storefront</h3>
               <p className="text-xs mb-3" style={{ opacity: 0.6 }}>The sourcing regions shown as a strip on the homepage, under the hero. Comma-separated.</p>
               <input value={settingsDraft.originsNote} onChange={(e) => setSettingsDraft((s) => ({ ...s, originsNote: e.target.value }))} placeholder="e.g. Kashmir, Iran, California" className="w-full border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+
+              <p className="text-xs font-medium mt-5 mb-1" style={{ opacity: 0.7 }}>Hero photos</p>
+              <p className="text-xs mb-3" style={{ opacity: 0.6, lineHeight: 1.5 }}>
+                The floating photos on the homepage hero. Choose up to 4 — pick your best shots. If you leave this
+                empty, it automatically uses photos from your products instead.
+              </p>
+              <div className="flex flex-wrap gap-3 mb-3">
+                {(settingsDraft.heroImages || []).map((img, i) => (
+                  <div key={i} className="relative">
+                    <img src={img} alt="" style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 12 }} />
+                    <button onClick={() => removeHeroImage(i)} className="absolute -top-2 -right-2 rounded-full amrit-focus" style={{ background: "var(--maroon)", color: "#fff", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <X size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {(settingsDraft.heroImages || []).length < 4 && (
+                <label className="text-xs px-3 py-2 rounded-full border inline-block cursor-pointer amrit-focus" style={{ borderColor: "rgba(33,29,26,0.25)" }}>
+                  {heroImageProcessing ? "Processing…" : "Add hero photo"}
+                  <input type="file" accept="image/*" onChange={handleHeroImageFile} className="hidden" />
+                </label>
+              )}
+              {heroImageError && <p className="text-xs mt-1" style={{ color: "var(--maroon)" }}>{heroImageError}</p>}
 
               <h3 className="font-semibold mt-6 mb-1">Legal &amp; compliance</h3>
               <p className="text-xs mb-3" style={{ opacity: 0.6 }}>An FSSAI number is required for food businesses in India — add it once issued.</p>
