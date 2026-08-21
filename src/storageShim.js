@@ -144,6 +144,14 @@ window.ordersApi = {
     const { error } = await supabase.from("orders").delete().eq("id", id);
     if (error) throw error;
   },
+  async trackByPhone(phone, orderCode) {
+    const { data, error } = await supabase.rpc("get_my_orders", {
+      p_phone: phone,
+      p_order_code: orderCode || null,
+    });
+    if (error) throw error;
+    return (data || []).map(mapOrderRow);
+  },
 };
 
 // ---------- window.reviewsApi (real reviews table) ----------
