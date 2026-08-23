@@ -615,6 +615,7 @@ export default function AmritStore() {
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [saveNote, setSaveNote] = useState("");
   const [variantChoice, setVariantChoice] = useState({});
+  const [pickQty, setPickQty] = useState({});
   const [cart, setCart] = useState({});
   const [expanded, setExpanded] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -927,6 +928,78 @@ export default function AmritStore() {
     }
   };
 
+  // About page story sections (alternating photo + text blocks)
+  const [aboutSections, setAboutSections] = useState([]);
+  const [aboutSectionsLoading, setAboutSectionsLoading] = useState(true);
+  const [aboutSectionDraft, setAboutSectionDraft] = useState({ id: null, heading: "", text: "", image: "" });
+  const [aboutSectionImageProcessing, setAboutSectionImageProcessing] = useState(false);
+  const [aboutSectionImageError, setAboutSectionImageError] = useState("");
+  const [aboutSectionNote, setAboutSectionNote] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get("about_sections", true);
+        const loaded = res ? JSON.parse(res.value) : null;
+        setAboutSections(Array.isArray(loaded) ? loaded : []);
+      } catch (e) {
+        setAboutSections([]);
+      } finally {
+        setAboutSectionsLoading(false);
+      }
+    })();
+  }, []);
+
+  const saveAboutSections = async (next) => {
+    setAboutSections(next);
+    try {
+      await window.storage.set("about_sections", JSON.stringify(next), true);
+      setAboutSectionNote("Saved");
+    } catch (e) {
+      setAboutSectionNote("Could not save — try again");
+    }
+    setTimeout(() => setAboutSectionNote(""), 2000);
+  };
+
+  const handleAboutSectionImageFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAboutSectionImageError("");
+    setAboutSectionImageProcessing(true);
+    try {
+      const dataUrl = await compressImage(file, 800, 0.78);
+      setAboutSectionDraft((d) => ({ ...d, image: dataUrl }));
+    } catch (err) {
+      setAboutSectionImageError("Could not process that image — try a different file.");
+    } finally {
+      setAboutSectionImageProcessing(false);
+      e.target.value = "";
+    }
+  };
+
+  const saveAboutSectionDraft = () => {
+    if (!aboutSectionDraft.heading.trim() || !aboutSectionDraft.text.trim()) return;
+    const cleaned = { ...aboutSectionDraft, id: aboutSectionDraft.id || slug(aboutSectionDraft.heading) };
+    const next = aboutSectionDraft.id && aboutSections.some((s) => s.id === aboutSectionDraft.id)
+      ? aboutSections.map((s) => (s.id === cleaned.id ? cleaned : s))
+      : [...aboutSections, cleaned];
+    saveAboutSections(next);
+    setAboutSectionDraft({ id: null, heading: "", text: "", image: "" });
+  };
+
+  const startEditAboutSection = (s) => setAboutSectionDraft({ ...s });
+  const deleteAboutSection = (id) => {
+    saveAboutSections(aboutSections.filter((s) => s.id !== id));
+    if (aboutSectionDraft.id === id) setAboutSectionDraft({ id: null, heading: "", text: "", image: "" });
+  };
+  const moveAboutSection = (index, dir) => {
+    const next = [...aboutSections];
+    const target = index + dir;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    saveAboutSections(next);
+  };
+
   const [heroImageProcessing, setHeroImageProcessing] = useState(false);
   const [heroImageError, setHeroImageError] = useState("");
   const handleHeroImageFile = async (e) => {
@@ -1153,12 +1226,12 @@ export default function AmritStore() {
   const shipping = subtotal === 0 || subtotal > settings.freeShippingThreshold ? 0 : settings.shippingCharge;
   const total = subtotal + shipping;
 
-  const addToCart = (product, variantIdx) => {
+  const addToCart = (product, variantIdx, addQty = 1) => {
     const v = product.variants[variantIdx];
     const key = `${product.id}::${variantIdx}`;
     setCart((c) => ({
       ...c,
-      [key]: { key, id: product.id, name: product.name, category: product.category, origin: product.origin, label: v.label, price: v.price, mrp: v.mrp || null, qty: (c[key]?.qty || 0) + 1 },
+      [key]: { key, id: product.id, name: product.name, category: product.category, origin: product.origin, label: v.label, price: v.price, mrp: v.mrp || null, qty: (c[key]?.qty || 0) + addQty },
     }));
   };
   const setQty = (key, qty) => setCart((c) => (c[key] ? { ...c, [key]: { ...c[key], qty: Math.max(0, qty) } } : c));
@@ -1578,83 +1651,76 @@ export default function AmritStore() {
             ))}
           </div>
 
-          <div className="mt-8 grid sm:grid-cols-2 gap-5">
+          <div className="mt-8 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {filteredProducts.map((p, pIdx) => {
               const vIdx = getVariantIdx(p.id);
               const v = p.variants[vIdx] || p.variants[0];
+              const qty = pickQty[p.id] || 1;
               return (
-                <Reveal key={p.id} delay={Math.min(pIdx * 50, 300)}>
-                <div className="amrit-card rounded-2xl border overflow-hidden" style={{ background: "var(--cream)", borderColor: "rgba(33,29,26,0.1)" }}>
-                  {p.image && (
-                    <button onClick={() => goToProduct(p.id)} className="block w-full amrit-focus relative" style={{ cursor: "pointer" }}>
-                      <img src={p.image} alt={p.name} style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block", filter: p.inStock === false ? "grayscale(0.6) opacity(0.6)" : "none" }} />
-                      {p.inStock === false && (
-                        <span className="absolute top-3 left-3 text-xs font-semibold px-2.5 py-1 rounded-full text-white" style={{ background: "var(--maroon)" }}>
+                <Reveal key={p.id} delay={Math.min(pIdx * 40, 280)}>
+                <div className="amrit-card rounded-xl border overflow-hidden flex flex-col h-full" style={{ background: "var(--cream)", borderColor: "rgba(33,29,26,0.1)" }}>
+                  <button onClick={() => goToProduct(p.id)} className="block w-full amrit-focus relative" style={{ cursor: "pointer" }}>
+                    {p.image ? (
+                      <img src={p.image} alt={p.name} style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", display: "block", filter: p.inStock === false ? "grayscale(0.6) opacity(0.6)" : "none" }} />
+                    ) : (
+                      <div className="w-full flex items-center justify-center" style={{ aspectRatio: "1/1", background: "var(--ivory)" }}>
+                        <Stamp product={p} size={56} />
+                      </div>
+                    )}
+                    {p.inStock === false && (
+                      <span className="absolute top-2 left-2 text-[10px] font-semibold px-2 py-1 rounded-full text-white" style={{ background: "var(--maroon)" }}>
+                        Out of stock
+                      </span>
+                    )}
+                  </button>
+                  <div className="p-3 flex flex-col flex-1">
+                    <button onClick={() => goToProduct(p.id)} className="text-left amrit-focus">
+                      <h3 className="font-semibold hover:underline leading-snug" style={{ fontFamily: "Fraunces, serif", fontSize: 14 }}>{p.name}</h3>
+                    </button>
+                    <div className="mt-1"><PriceTag variant={v} align="left" size="sm" /></div>
+
+                    {p.variants.length > 1 ? (
+                      <select
+                        value={vIdx}
+                        onChange={(e) => setVariantChoice((c) => ({ ...c, [p.id]: Number(e.target.value) }))}
+                        className="mt-2 text-xs border rounded-lg px-2 py-1.5 amrit-focus"
+                        style={{ borderColor: "rgba(33,29,26,0.2)", background: "transparent" }}
+                      >
+                        {p.variants.map((vv, i) => {
+                          const vPct = vv.mrp && vv.mrp > vv.price ? Math.round((1 - vv.price / vv.mrp) * 100) : 0;
+                          return (
+                            <option key={i} value={i}>
+                              {vv.label}{vPct > 0 ? ` · Save ${vPct}%` : ""}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    ) : (
+                      <p className="mt-2 text-xs" style={{ opacity: 0.5 }}>{v.label}</p>
+                    )}
+
+                    <div className="mt-auto pt-2">
+                      {p.inStock === false ? (
+                        <span className="block text-center text-xs font-medium px-2 py-2 rounded-full" style={{ background: "rgba(122,46,29,0.08)", color: "var(--maroon)" }}>
                           Out of stock
                         </span>
-                      )}
-                    </button>
-                  )}
-                  <div className="p-5">
-                  <div className="flex gap-4">
-                    {!p.image && (
-                      <button onClick={() => goToProduct(p.id)} className="amrit-focus">
-                        <Stamp product={p} />
-                      </button>
-                    )}
-                    <div className="flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <button onClick={() => goToProduct(p.id)} className="text-left amrit-focus">
-                            <h3 className="font-semibold hover:underline" style={{ fontFamily: "Fraunces, serif", fontSize: 18 }}>{p.name}</h3>
-                          </button>
-                          <p style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, opacity: 0.6 }}>{p.category}</p>
-                        </div>
-                        <PriceTag variant={v} />
-                      </div>
-                      <button onClick={() => setExpanded(expanded === p.id ? null : p.id)} className="mt-2 flex items-center gap-1 text-xs amrit-focus" style={{ opacity: 0.7 }}>
-                        Details <ChevronDown size={13} style={{ transform: expanded === p.id ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
-                      </button>
-                      {expanded === p.id && (
-                        <>
-                          <p className="mt-2 text-sm" style={{ opacity: 0.8, lineHeight: 1.6 }}>{p.desc}</p>
-                          <ProductVideo url={p.videoUrl} />
-                          <NutritionPanel nutrition={p.nutrition} keyNutrients={p.keyNutrients} />
-                        </>
-                      )}
-                      {p.variants.length > 1 && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {p.variants.map((vv, i) => (
-                            <button
-                              key={i}
-                              onClick={() => setVariantChoice((c) => ({ ...c, [p.id]: i }))}
-                              className="text-xs px-3 py-1 rounded-full border amrit-focus"
-                              style={{ borderColor: i === vIdx ? "var(--ink)" : "rgba(33,29,26,0.2)", background: i === vIdx ? "var(--ink)" : "transparent", color: i === vIdx ? "var(--ivory)" : "inherit" }}
-                            >
-                              {vv.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      <div className="mt-3 flex items-center justify-between">
-                        {p.inStock === false ? (
-                          <span className="text-xs font-semibold px-3 py-2 rounded-full" style={{ background: "rgba(122,46,29,0.1)", color: "var(--maroon)" }}>
-                            Out of stock
-                          </span>
-                        ) : cart[`${p.id}::${vIdx}`] ? (
-                          <div className="flex items-center gap-3 rounded-full border px-3 py-1.5" style={{ borderColor: "rgba(33,29,26,0.15)" }}>
-                            <button onClick={() => setQty(`${p.id}::${vIdx}`, (cart[`${p.id}::${vIdx}`]?.qty || 0) - 1)} className="amrit-focus"><Minus size={14} /></button>
-                            <span className="text-sm w-4 text-center">{cart[`${p.id}::${vIdx}`]?.qty || 0}</span>
-                            <button onClick={() => addToCart(p, vIdx)} className="amrit-focus"><Plus size={14} /></button>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex items-center border rounded-full" style={{ borderColor: "rgba(33,29,26,0.2)" }}>
+                            <button onClick={() => setPickQty((q) => ({ ...q, [p.id]: Math.max(1, qty - 1) }))} className="w-6 h-7 flex items-center justify-center amrit-focus"><Minus size={11} /></button>
+                            <span className="text-xs w-4 text-center">{qty}</span>
+                            <button onClick={() => setPickQty((q) => ({ ...q, [p.id]: qty + 1 }))} className="w-6 h-7 flex items-center justify-center amrit-focus"><Plus size={11} /></button>
                           </div>
-                        ) : (
-                          <button onClick={() => addToCart(p, vIdx)} className="text-sm px-4 py-2 rounded-full font-medium amrit-focus" style={{ background: "var(--ink)", color: "var(--ivory)" }}>
+                          <button
+                            onClick={() => { addToCart(p, vIdx, qty); setPickQty((q) => ({ ...q, [p.id]: 1 })); }}
+                            className="flex-1 text-xs px-2 py-2 rounded-full font-medium amrit-focus"
+                            style={{ background: "var(--ink)", color: "var(--ivory)" }}
+                          >
                             Add to cart
                           </button>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
                   </div>
                 </div>
                 </Reveal>
@@ -2011,26 +2077,53 @@ export default function AmritStore() {
       )}
 
       {page === "about" && (
-        <section className="max-w-4xl mx-auto px-5 py-14">
-          <h2 style={{ fontFamily: "Fraunces, serif", fontSize: 34 }}>{settings.aboutTitle || "Our Story"}</h2>
-          <div className="mt-8 grid sm:grid-cols-2 gap-10 items-start">
-            <div>
-              {settings.aboutPhoto ? (
-                <img src={settings.aboutPhoto} alt={settings.aboutTitle || "Amrit"} className="w-full rounded-2xl" style={{ aspectRatio: "4/5", objectFit: "cover" }} />
-              ) : (
-                <div className="w-full rounded-2xl flex items-center justify-center border" style={{ aspectRatio: "4/5", borderColor: "rgba(33,29,26,0.15)", background: "var(--cream)" }}>
-                  <LogoMark size={90} />
-                </div>
-              )}
-            </div>
-            <div className="text-sm" style={{ lineHeight: 1.8, opacity: 0.85 }}>
-              {settings.aboutStory ? (
-                settings.aboutStory.split("\n").filter(Boolean).map((para, i) => <p key={i} className="mb-4">{para}</p>)
-              ) : (
-                <p style={{ opacity: 0.6 }}>The Amrit story isn't written yet — add it in Manage &rarr; Settings &rarr; About Us.</p>
-              )}
+        <section className="pb-16">
+          <div className="max-w-4xl mx-auto px-5 py-14">
+            <p style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: 2, color: "var(--gold)" }}>OUR STORY</p>
+            <h2 className="mt-2" style={{ fontFamily: "Fraunces, serif", fontSize: 34 }}>{settings.aboutTitle || "Our Story"}</h2>
+            <div className="mt-8 grid sm:grid-cols-2 gap-10 items-start">
+              <div>
+                {settings.aboutPhoto ? (
+                  <img src={settings.aboutPhoto} alt={settings.aboutTitle || "Amrit"} className="w-full rounded-2xl" style={{ aspectRatio: "4/5", objectFit: "cover" }} />
+                ) : (
+                  <div className="w-full rounded-2xl flex items-center justify-center border" style={{ aspectRatio: "4/5", borderColor: "rgba(33,29,26,0.15)", background: "var(--cream)" }}>
+                    <LogoMark size={90} />
+                  </div>
+                )}
+              </div>
+              <div className="text-sm" style={{ lineHeight: 1.8, opacity: 0.85 }}>
+                {settings.aboutStory ? (
+                  settings.aboutStory.split("\n").filter(Boolean).map((para, i) => <p key={i} className="mb-4">{para}</p>)
+                ) : (
+                  <p style={{ opacity: 0.6 }}>The Amrit story isn't written yet — add it in Manage &rarr; Settings &rarr; About Us.</p>
+                )}
+              </div>
             </div>
           </div>
+
+          {aboutSections.map((s, i) => (
+            <Reveal key={s.id}>
+              <div className={i % 2 === 1 ? "border-t" : "border-t"} style={{ borderColor: "rgba(33,29,26,0.08)", background: i % 2 === 1 ? "var(--cream)" : "transparent" }}>
+                <div className="max-w-4xl mx-auto px-5 py-14 grid sm:grid-cols-2 gap-10 items-center">
+                  <div className={i % 2 === 1 ? "sm:order-2" : ""}>
+                    {s.image ? (
+                      <img src={s.image} alt={s.heading} className="w-full rounded-2xl" style={{ aspectRatio: "4/3", objectFit: "cover" }} />
+                    ) : (
+                      <div className="w-full rounded-2xl flex items-center justify-center border" style={{ aspectRatio: "4/3", borderColor: "rgba(33,29,26,0.15)", background: "var(--cream)" }}>
+                        <LogoMark size={60} />
+                      </div>
+                    )}
+                  </div>
+                  <div className={i % 2 === 1 ? "sm:order-1" : ""}>
+                    <h3 style={{ fontFamily: "Fraunces, serif", fontSize: 24 }}>{s.heading}</h3>
+                    <div className="mt-3 text-sm" style={{ lineHeight: 1.8, opacity: 0.85 }}>
+                      {s.text.split("\n").filter(Boolean).map((para, pi) => <p key={pi} className="mb-3">{para}</p>)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Reveal>
+          ))}
         </section>
       )}
 
@@ -2785,6 +2878,67 @@ export default function AmritStore() {
               </div>
               <input value={settingsDraft.aboutTitle} onChange={(e) => setSettingsDraft((s) => ({ ...s, aboutTitle: e.target.value }))} placeholder="Heading (e.g. Our Story)" className="w-full border rounded-lg px-3 py-2 text-sm amrit-focus mb-3" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
               <textarea value={settingsDraft.aboutStory} onChange={(e) => setSettingsDraft((s) => ({ ...s, aboutStory: e.target.value }))} placeholder="Tell customers how Amrit started, what it means to you, and why they can trust it. A few paragraphs is plenty." rows={6} className="w-full border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+
+              <div className="mt-6 border-t pt-6" style={{ borderColor: "rgba(33,29,26,0.1)" }}>
+                <p className="text-sm font-medium mb-1">Story sections (optional)</p>
+                <p className="text-xs mb-4" style={{ opacity: 0.6, lineHeight: 1.5 }}>
+                  Extra chapters below the intro — e.g. "From Factory to Market," "A Family Legacy." Each gets its own
+                  photo and text, shown alternating left and right like a proper brand story page. Add as many as you like.
+                </p>
+                <div className="text-xs mb-4" style={{ fontFamily: "'IBM Plex Mono', monospace", opacity: 0.55 }}>
+                  {aboutSectionNote || (aboutSectionsLoading ? "Loading…" : "")}
+                </div>
+
+                <div className="grid sm:grid-cols-5 gap-6">
+                  <div className="sm:col-span-2 border rounded-2xl p-4" style={{ borderColor: "rgba(33,29,26,0.12)" }}>
+                    <h4 className="font-semibold text-sm mb-3">{aboutSectionDraft.id ? "Edit section" : "Add section"}</h4>
+                    <div className="flex flex-col gap-2">
+                      {aboutSectionDraft.image && (
+                        <img src={aboutSectionDraft.image} alt="" className="w-full rounded-lg" style={{ aspectRatio: "4/3", objectFit: "cover" }} />
+                      )}
+                      <label className="text-xs px-3 py-2 rounded-full border inline-block cursor-pointer amrit-focus w-fit" style={{ borderColor: "rgba(33,29,26,0.25)" }}>
+                        {aboutSectionImageProcessing ? "Processing…" : aboutSectionDraft.image ? "Replace photo" : "Upload photo"}
+                        <input type="file" accept="image/*" onChange={handleAboutSectionImageFile} className="hidden" />
+                      </label>
+                      {aboutSectionImageError && <p className="text-xs" style={{ color: "var(--maroon)" }}>{aboutSectionImageError}</p>}
+                      <input value={aboutSectionDraft.heading} onChange={(e) => setAboutSectionDraft((d) => ({ ...d, heading: e.target.value }))} placeholder="Heading (e.g. A Family Legacy)" className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                      <textarea value={aboutSectionDraft.text} onChange={(e) => setAboutSectionDraft((d) => ({ ...d, text: e.target.value }))} placeholder="A paragraph or two for this chapter" rows={4} className="border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
+                      <div className="flex gap-2 mt-1">
+                        <button onClick={saveAboutSectionDraft} disabled={!aboutSectionDraft.heading.trim() || !aboutSectionDraft.text.trim()} className="flex-1 py-2 rounded-full font-semibold text-xs amrit-focus disabled:opacity-40" style={{ background: "var(--ink)", color: "var(--ivory)" }}>
+                          {aboutSectionDraft.id ? "Save changes" : "Add section"}
+                        </button>
+                        {aboutSectionDraft.id && (
+                          <button onClick={() => setAboutSectionDraft({ id: null, heading: "", text: "", image: "" })} className="px-3 py-2 rounded-full text-xs border amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }}>Cancel</button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="sm:col-span-3">
+                    {aboutSections.length === 0 ? (
+                      <p className="text-sm" style={{ opacity: 0.6 }}>No extra sections yet — the page will just show the intro above.</p>
+                    ) : (
+                      <div className="flex flex-col gap-3">
+                        {aboutSections.map((s, i) => (
+                          <div key={s.id} className="border rounded-xl p-3 flex items-center gap-3" style={{ borderColor: "rgba(33,29,26,0.12)" }}>
+                            {s.image && <img src={s.image} alt="" style={{ width: 56, height: 44, objectFit: "cover", borderRadius: 8 }} />}
+                            <div className="flex-1">
+                              <h4 className="font-semibold text-sm">{s.heading}</h4>
+                              <p className="text-xs line-clamp-1" style={{ opacity: 0.6 }}>{s.text}</p>
+                            </div>
+                            <div className="flex flex-col">
+                              <button onClick={() => moveAboutSection(i, -1)} disabled={i === 0} className="amrit-focus disabled:opacity-20" style={{ opacity: 0.6 }}><ChevronDown size={14} style={{ transform: "rotate(180deg)" }} /></button>
+                              <button onClick={() => moveAboutSection(i, 1)} disabled={i === aboutSections.length - 1} className="amrit-focus disabled:opacity-20" style={{ opacity: 0.6 }}><ChevronDown size={14} /></button>
+                            </div>
+                            <button onClick={() => startEditAboutSection(s)} className="text-xs underline amrit-focus">Edit</button>
+                            <button onClick={() => deleteAboutSection(s.id)} className="amrit-focus" style={{ opacity: 0.5 }}><Trash2 size={16} /></button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
 
               <h3 className="font-semibold mt-6 mb-1">Analytics</h3>
               <p className="text-xs mb-3" style={{ opacity: 0.6, lineHeight: 1.5 }}>
