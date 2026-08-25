@@ -1246,28 +1246,110 @@ export default function AmritStore() {
   };
   const goToProduct = (id) => { setSelectedProductId(id); goTo("product"); };
 
-  const placeOrder = () => {
+  const [paymentError, setPaymentError] = useState("");
+
+  const finalizeOrder = async (extra = {}) => {
+    const orderCode = "AMR-" + Math.floor(100000 + Math.random() * 900000);
+    const order = {
+      orderCode,
+      placedAt: new Date().toISOString(),
+      status: "new",
+      paymentMethod,
+      customer: { name: form.name, phone: form.phone, address: form.address, city: form.city, pincode: form.pincode },
+      items: cartItems.map((i) => ({ name: i.name, label: i.label, price: i.price, qty: i.qty })),
+      subtotal, shipping, total,
+      ...extra,
+    };
+    try {
+      await window.ordersApi.insert(order);
+    } catch (e) { /* order still confirms to the customer; check Orders tab if this ever fails */ }
+    setOrderId(orderCode);
+    setPlacing(false);
+    setCart({});
+    setPaymentMethod("upi");
+    goTo("confirmation");
+  };
+
+  const loadRazorpayScript = () =>
+    new Promise((resolve) => {
+      if (window.Razorpay) return resolve(true);
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+
+  const payWithRazorpay = async () => {
+    setPaymentError("");
     setPlacing(true);
-    setTimeout(async () => {
-      const orderCode = "AMR-" + Math.floor(100000 + Math.random() * 900000);
-      const order = {
-        orderCode,
-        placedAt: new Date().toISOString(),
-        status: "new",
-        paymentMethod,
-        customer: { name: form.name, phone: form.phone, address: form.address, city: form.city, pincode: form.pincode },
-        items: cartItems.map((i) => ({ name: i.name, label: i.label, price: i.price, qty: i.qty })),
-        subtotal, shipping, total,
-      };
-      try {
-        await window.ordersApi.insert(order);
-      } catch (e) { /* order still confirms to the customer; check Orders tab if this ever fails */ }
-      setOrderId(orderCode);
+    const scriptOk = await loadRazorpayScript();
+    if (!scriptOk) {
+      setPaymentError("Could not load the payment gateway. Check your connection and try again.");
       setPlacing(false);
-      setCart({});
-      setPaymentMethod("upi");
-      goTo("confirmation");
-    }, 900);
+      return;
+    }
+    try {
+      const res = await fetch("/api/create-razorpay-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: total }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not start payment.");
+
+      const rzp = new window.Razorpay({
+        key: data.keyId,
+        amount: data.amount,
+        currency: data.currency,
+        order_id: data.orderId,
+        name: "Amrit",
+        description: "Order payment",
+        prefill: { name: form.name, contact: form.phone },
+        theme: { color: "#A9772F" },
+        handler: async function (response) {
+          try {
+            const verifyRes = await fetch("/api/verify-razorpay-payment", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(response),
+            });
+            const verifyData = await verifyRes.json();
+            if (verifyData.verified) {
+              await finalizeOrder({ razorpayPaymentId: response.razorpay_payment_id, razorpayOrderId: response.razorpay_order_id });
+            } else {
+              setPaymentError(`Payment could not be verified. If money was deducted, please contact us with payment ID ${response.razorpay_payment_id}.`);
+              setPlacing(false);
+            }
+          } catch (e) {
+            setPaymentError(`Something went wrong confirming your payment. If money was deducted, please contact us with payment ID ${response.razorpay_payment_id}.`);
+            setPlacing(false);
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            setPlacing(false);
+          },
+        },
+      });
+      rzp.on("payment.failed", function (response) {
+        setPaymentError("Payment failed: " + (response?.error?.description || "please try again."));
+        setPlacing(false);
+      });
+      rzp.open();
+    } catch (err) {
+      setPaymentError(err.message || "Could not start payment.");
+      setPlacing(false);
+    }
+  };
+
+  const placeOrder = () => {
+    if (paymentMethod === "cod") {
+      setPlacing(true);
+      setTimeout(() => finalizeOrder(), 900);
+    } else {
+      payWithRazorpay();
+    }
   };
 
   const trackOrders = async () => {
@@ -1934,17 +2016,19 @@ export default function AmritStore() {
                 ))}
               </div>
               {paymentMethod === "cod" ? (
-                <div className="mt-3 border border-dashed rounded-xl p-3 text-xs" style={{ borderColor: "rgba(33,29,26,0.25)", fontFamily: "'IBM Plex Mono', monospace", opacity: 0.75, lineHeight: 1.6 }}>
-                  DEV NOTE &mdash; Cash on Delivery works today with no backend needed: no payment is collected online, the order
-                  is just saved for you to fulfil and the customer pays cash at delivery.
-                </div>
+                <p className="mt-3 text-xs" style={{ opacity: 0.6, lineHeight: 1.6 }}>
+                  Pay in cash when your order arrives at your door.
+                </p>
               ) : (
-                <div className="mt-3 border border-dashed rounded-xl p-3 text-xs" style={{ borderColor: "rgba(33,29,26,0.25)", fontFamily: "'IBM Plex Mono', monospace", opacity: 0.75, lineHeight: 1.6 }}>
-                  DEV NOTE &mdash; this button is fully wired on the frontend for Razorpay ({paymentMethod === "upi" ? "UPI" : "Card"}).
-                  To take a real live payment, add a small backend route that creates a Razorpay order server-side and
-                  verifies the payment signature, then call it from here with your key_id. No card or UPI details are
-                  collected in this preview.
-                </div>
+                <p className="mt-3 text-xs" style={{ opacity: 0.6, lineHeight: 1.6 }}>
+                  You'll complete payment securely via Razorpay — {paymentMethod === "upi" ? "UPI" : "card"} details are
+                  entered on Razorpay's own checkout, never stored on this site.
+                </p>
+              )}
+              {paymentError && (
+                <p className="mt-3 text-sm rounded-lg px-3 py-2" style={{ background: "rgba(122,46,29,0.08)", color: "var(--maroon)" }}>
+                  {paymentError}
+                </p>
               )}
             </div>
             <button
@@ -2532,6 +2616,11 @@ export default function AmritStore() {
                             {new Date(o.placedAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
                             {" \u00b7 "}{o.paymentMethod === "cod" ? "Cash on Delivery" : o.paymentMethod === "card" ? "Card" : "UPI"}
                           </p>
+                          {o.razorpayPaymentId && (
+                            <p className="text-xs mt-0.5" style={{ fontFamily: "'IBM Plex Mono', monospace", opacity: 0.5 }}>
+                              Payment ID: {o.razorpayPaymentId}
+                            </p>
+                          )}
                         </div>
                         <span className="font-semibold">{rupee(o.total)}</span>
                       </div>
