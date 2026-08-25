@@ -112,6 +112,8 @@ function mapOrderRow(row) {
     subtotal: row.subtotal,
     shipping: row.shipping,
     total: row.total,
+    razorpayPaymentId: row.razorpay_payment_id,
+    razorpayOrderId: row.razorpay_order_id,
   };
 }
 
@@ -131,6 +133,8 @@ window.ordersApi = {
       subtotal: order.subtotal,
       shipping: order.shipping,
       total: order.total,
+      razorpay_payment_id: order.razorpayPaymentId || null,
+      razorpay_order_id: order.razorpayOrderId || null,
     });
     if (error) throw error;
   },
