@@ -740,7 +740,11 @@ export default function AmritStore() {
     await loadTeam();
   };
 
-  // Load catalog from persistent storage on mount, seed it if empty
+  // Load catalog from persistent storage on mount.
+  // IMPORTANT: this never writes anything back automatically. If no catalog
+  // is found (or it can't be read), we show the starter demo products only
+  // in this browser's memory as a safe placeholder — never saved to the
+  // database — so a temporary read hiccup can never wipe real data.
   useEffect(() => {
     (async () => {
       try {
@@ -749,13 +753,9 @@ export default function AmritStore() {
         if (loaded && Array.isArray(loaded) && loaded.length) {
           setProducts(loaded);
         } else {
-          await window.storage.set("catalog", JSON.stringify(SEED_PRODUCTS), true);
           setProducts(SEED_PRODUCTS);
         }
       } catch (e) {
-        try {
-          await window.storage.set("catalog", JSON.stringify(SEED_PRODUCTS), true);
-        } catch (e2) { /* storage unavailable, run on seed data only */ }
         setProducts(SEED_PRODUCTS);
       } finally {
         setCatalogLoading(false);
