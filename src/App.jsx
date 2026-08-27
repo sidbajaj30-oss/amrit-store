@@ -742,15 +742,16 @@ export default function AmritStore() {
 
   // Load catalog from persistent storage on mount.
   // IMPORTANT: this never writes anything back automatically. If no catalog
-  // is found (or it can't be read), we show the starter demo products only
-  // in this browser's memory as a safe placeholder — never saved to the
-  // database — so a temporary read hiccup can never wipe real data.
+  // key exists at all (or it can't be read), we show the starter demo
+  // products only in this browser's memory as a safe placeholder — never
+  // saved to the database. A genuinely empty catalog (you deleted every
+  // product on purpose) is shown as empty, not replaced with demo data.
   useEffect(() => {
     (async () => {
       try {
         const res = await window.storage.get("catalog", true);
         const loaded = res ? JSON.parse(res.value) : null;
-        if (loaded && Array.isArray(loaded) && loaded.length) {
+        if (Array.isArray(loaded)) {
           setProducts(loaded);
         } else {
           setProducts(SEED_PRODUCTS);
