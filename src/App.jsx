@@ -1405,8 +1405,8 @@ export default function AmritStore() {
       {cropperFile && (
         <ImageCropper
           file={cropperFile}
-          aspectW={4}
-          aspectH={3}
+          aspectW={1}
+          aspectH={1}
           onCancel={() => setCropperFile(null)}
           onConfirm={(dataUrl) => { setDraft((d) => ({ ...d, image: dataUrl })); setCropperFile(null); }}
         />
