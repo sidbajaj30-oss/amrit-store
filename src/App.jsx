@@ -273,14 +273,25 @@ function ImageCropper({ file, aspectW = 4, aspectH = 3, onCancel, onConfirm }) {
   );
 }
 
+// Returns a product's photos as an array, however the data is shaped —
+// works for old products (single `image` string) and new ones (`images`
+// array) identically, so nothing existing ever breaks.
+function getProductImages(product) {
+  if (!product) return [];
+  if (Array.isArray(product.images) && product.images.length) return product.images;
+  if (product.image) return [product.image];
+  return [];
+}
+
 function Stamp({ product, size = 76 }) {
   const tones = { Almonds: "gold", Walnuts: "maroon", Pistachios: "saffron", Cashews: "gold", Dates: "maroon", Raisins: "saffron", Saffron: "maroon", "Gift Box": "gold" };
   const tone = tones[product.category] || "gold";
   const color = tone === "gold" ? "var(--gold)" : tone === "saffron" ? "var(--saffron)" : "var(--maroon)";
-  if (product.image) {
+  const images = getProductImages(product);
+  if (images[0]) {
     return (
       <div className="rounded-full overflow-hidden shrink-0 border" style={{ width: size, height: size, borderColor: color, borderWidth: 1.4 }}>
-        <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        <img src={images[0]} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
       </div>
     );
   }
@@ -489,10 +500,10 @@ function PriceTag({ variant, align = "right", size = "base" }) {
 }
 
 const emptyNutrition = () => ({ calories: "", protein: "", fat: "", carbs: "", fiber: "" });
-const emptyDraft = () => ({ id: null, name: "", category: "", origin: "", desc: "", image: "", videoUrl: "", nutrition: emptyNutrition(), keyNutrients: "", inStock: true, variants: [{ label: "", price: "", mrp: "" }] });
+const emptyDraft = () => ({ id: null, name: "", category: "", origin: "", desc: "", image: "", images: [], videoUrl: "", nutrition: emptyNutrition(), keyNutrients: "", inStock: true, bestseller: false, variants: [{ label: "", price: "", mrp: "" }] });
 const emptyBannerDraft = () => ({ id: null, image: "", title: "", subtitle: "", ctaText: "", ctaLink: "" });
 const emptyRecipeDraft = () => ({ id: null, image: "", title: "", desc: "" });
-const emptyReviewForm = () => ({ name: "", rating: 5, text: "", image: "" });
+const emptyReviewForm = () => ({ name: "", rating: 5, text: "", image: "", productId: null, productName: "" });
 
 // --- Fallback auth/orders/reviews for the in-chat preview only ---
 // The real deployed site (via storageShim.js) defines window.auth,
@@ -604,6 +615,8 @@ export default function AmritStore() {
   const [page, setPage] = useState(() => (typeof window !== "undefined" && window.location.hash === "#manage" ? "admin" : "home"));
   const [categoryFilter, setCategoryFilter] = useState(null);
   const [selectedProductId, setSelectedProductId] = useState(null);
+  const [activeImageIdx, setActiveImageIdx] = useState(0);
+  useEffect(() => { setActiveImageIdx(0); }, [selectedProductId]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [trackPhone, setTrackPhone] = useState("");
   const [trackCode, setTrackCode] = useState("");
@@ -831,6 +844,56 @@ export default function AmritStore() {
       }
     })();
   }, []);
+
+  // Category tile images (optional — falls back to a representative product's photo/letter badge)
+  const [categoryImages, setCategoryImages] = useState({});
+  const [categoryImageProcessing, setCategoryImageProcessing] = useState(null); // which category is uploading
+  const [categoryImageError, setCategoryImageError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get("category_images", true);
+        const loaded = res ? JSON.parse(res.value) : null;
+        setCategoryImages(loaded && typeof loaded === "object" ? loaded : {});
+      } catch (e) {
+        setCategoryImages({});
+      }
+    })();
+  }, []);
+
+  const saveCategoryImage = async (category, dataUrl) => {
+    const next = { ...categoryImages, [category]: dataUrl };
+    setCategoryImages(next);
+    try {
+      await window.storage.set("category_images", JSON.stringify(next), true);
+    } catch (e) { /* best-effort */ }
+  };
+
+  const removeCategoryImage = async (category) => {
+    const next = { ...categoryImages };
+    delete next[category];
+    setCategoryImages(next);
+    try {
+      await window.storage.set("category_images", JSON.stringify(next), true);
+    } catch (e) { /* best-effort */ }
+  };
+
+  const handleCategoryImageFile = async (category, e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCategoryImageError("");
+    setCategoryImageProcessing(category);
+    try {
+      const dataUrl = await compressImage(file, 500, 0.75);
+      await saveCategoryImage(category, dataUrl);
+    } catch (err) {
+      setCategoryImageError("Could not process that image — try a different file.");
+    } finally {
+      setCategoryImageProcessing(null);
+      e.target.value = "";
+    }
+  };
 
   // Inject Microsoft Clarity (free visitor analytics) once we know the clarity ID
   useEffect(() => {
@@ -1167,6 +1230,8 @@ export default function AmritStore() {
         rating: reviewForm.rating,
         text: reviewForm.text.trim(),
         image: reviewForm.image || "",
+        productId: reviewForm.productId || null,
+        productName: reviewForm.productName || "",
         createdAt: new Date().toISOString(),
         status: "pending",
       });
@@ -1372,7 +1437,7 @@ export default function AmritStore() {
   };
 
   // --- Admin helpers ---
-  const startEdit = (p) => setDraft({ id: p.id, name: p.name, category: p.category, origin: p.origin, desc: p.desc, image: p.image || "", videoUrl: p.videoUrl || "", nutrition: { ...emptyNutrition(), ...(p.nutrition || {}) }, keyNutrients: p.keyNutrients || "", inStock: p.inStock !== false, variants: p.variants.map((v) => ({ label: v.label, price: String(v.price), mrp: v.mrp ? String(v.mrp) : "" })) });
+  const startEdit = (p) => setDraft({ id: p.id, name: p.name, category: p.category, origin: p.origin, desc: p.desc, image: p.image || "", images: getProductImages(p), videoUrl: p.videoUrl || "", nutrition: { ...emptyNutrition(), ...(p.nutrition || {}) }, keyNutrients: p.keyNutrients || "", inStock: p.inStock !== false, bestseller: !!p.bestseller, variants: p.variants.map((v) => ({ label: v.label, price: String(v.price), mrp: v.mrp ? String(v.mrp) : "" })) });
   const startNew = () => setDraft(emptyDraft());
   const updateDraftVariant = (idx, field, val) => setDraft((d) => ({ ...d, variants: d.variants.map((v, i) => (i === idx ? { ...v, [field]: val } : v)) }));
   const addDraftVariant = () => setDraft((d) => ({ ...d, variants: [...d.variants, { label: "", price: "", mrp: "" }] }));
@@ -1389,7 +1454,8 @@ export default function AmritStore() {
     if (!draft.name.trim() || cleanVariants.length === 0) return;
     const cleanNutrition = {};
     Object.entries(draft.nutrition).forEach(([k, v]) => { if (v !== "") cleanNutrition[k] = Number(v); });
-    const cleaned = { id: draft.id || slug(draft.name), name: draft.name.trim(), category: draft.category.trim() || "Other", origin: draft.origin.trim() || "—", desc: draft.desc.trim(), image: draft.image || "", videoUrl: draft.videoUrl.trim() || "", nutrition: cleanNutrition, keyNutrients: draft.keyNutrients.trim(), inStock: draft.inStock, variants: cleanVariants };
+    const cleanImages = (draft.images || []).filter(Boolean).slice(0, 4);
+    const cleaned = { id: draft.id || slug(draft.name), name: draft.name.trim(), category: draft.category.trim() || "Other", origin: draft.origin.trim() || "—", desc: draft.desc.trim(), image: cleanImages[0] || "", images: cleanImages, videoUrl: draft.videoUrl.trim() || "", nutrition: cleanNutrition, keyNutrients: draft.keyNutrients.trim(), inStock: draft.inStock, bestseller: !!draft.bestseller, variants: cleanVariants };
     const next = draft.id ? products.map((p) => (p.id === draft.id ? cleaned : p)) : [...products, cleaned];
     saveCatalog(next);
     setDraft(emptyDraft());
@@ -1408,7 +1474,10 @@ export default function AmritStore() {
           aspectW={1}
           aspectH={1}
           onCancel={() => setCropperFile(null)}
-          onConfirm={(dataUrl) => { setDraft((d) => ({ ...d, image: dataUrl })); setCropperFile(null); }}
+          onConfirm={(dataUrl) => {
+            setDraft((d) => ({ ...d, images: [...(d.images || []), dataUrl].slice(0, 4) }));
+            setCropperFile(null);
+          }}
         />
       )}
       <style>{`
@@ -1568,7 +1637,11 @@ export default function AmritStore() {
               {uniqueCategoryTiles.map((p, i) => (
                 <Reveal key={p.category} delay={i * 60}>
                   <button onClick={() => { setCategoryFilter(p.category); goTo("catalog"); }} className="amrit-card amrit-focus flex flex-col items-center gap-3 rounded-2xl p-5 border w-full" style={{ background: "var(--cream)", borderColor: "rgba(33,29,26,0.1)" }}>
-                    <Stamp product={p} />
+                    {categoryImages[p.category] ? (
+                      <img src={categoryImages[p.category]} alt={p.category} style={{ width: 76, height: 76, borderRadius: "50%", objectFit: "cover" }} />
+                    ) : (
+                      <Stamp product={p} />
+                    )}
                     <span className="text-sm font-medium text-center">{p.category}</span>
                   </button>
                 </Reveal>
@@ -1688,7 +1761,11 @@ export default function AmritStore() {
                 {uniqueCategoryTiles.map((p, i) => (
                   <Reveal key={p.category} delay={i * 60}>
                     <button onClick={() => setCategoryFilter(p.category)} className="amrit-card amrit-focus flex flex-col items-center gap-3 rounded-2xl p-5 border w-full" style={{ background: "var(--cream)", borderColor: "rgba(33,29,26,0.1)" }}>
-                      <Stamp product={p} />
+                      {categoryImages[p.category] ? (
+                        <img src={categoryImages[p.category]} alt={p.category} style={{ width: 76, height: 76, borderRadius: "50%", objectFit: "cover" }} />
+                      ) : (
+                        <Stamp product={p} />
+                      )}
                       <span className="text-sm font-medium text-center">{p.category}</span>
                     </button>
                   </Reveal>
@@ -1743,8 +1820,8 @@ export default function AmritStore() {
                 <Reveal key={p.id} delay={Math.min(pIdx * 40, 280)}>
                 <div className="amrit-card rounded-xl border overflow-hidden flex flex-col h-full" style={{ background: "var(--cream)", borderColor: "rgba(33,29,26,0.1)" }}>
                   <button onClick={() => goToProduct(p.id)} className="block w-full amrit-focus relative" style={{ cursor: "pointer" }}>
-                    {p.image ? (
-                      <img src={p.image} alt={p.name} style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", display: "block", filter: p.inStock === false ? "grayscale(0.6) opacity(0.6)" : "none" }} />
+                    {getProductImages(p)[0] ? (
+                      <img src={getProductImages(p)[0]} alt={p.name} style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", display: "block", filter: p.inStock === false ? "grayscale(0.6) opacity(0.6)" : "none" }} />
                     ) : (
                       <div className="w-full flex items-center justify-center" style={{ aspectRatio: "1/1", background: "var(--ivory)" }}>
                         <Stamp product={p} size={56} />
@@ -1753,6 +1830,11 @@ export default function AmritStore() {
                     {p.inStock === false && (
                       <span className="absolute top-2 left-2 text-[10px] font-semibold px-2 py-1 rounded-full text-white" style={{ background: "var(--maroon)" }}>
                         Out of stock
+                      </span>
+                    )}
+                    {p.bestseller && p.inStock !== false && (
+                      <span className="absolute top-2 right-2 text-[10px] font-semibold px-2 py-1 rounded-full text-white" style={{ background: "var(--gold)", color: "var(--ink)" }}>
+                        Bestseller
                       </span>
                     )}
                   </button>
@@ -1828,17 +1910,33 @@ export default function AmritStore() {
         const vIdx = getVariantIdx(p.id);
         const v = p.variants[vIdx] || p.variants[0];
         const inCartQty = cart[`${p.id}::${vIdx}`]?.qty || 0;
+        const images = getProductImages(p);
+        const mainImage = images[activeImageIdx] || images[0];
         return (
           <section className="max-w-5xl mx-auto px-5 py-12">
             <button onClick={() => goTo("catalog")} className="text-xs underline amrit-focus" style={{ opacity: 0.6 }}>&larr; Back to Shop</button>
             <div className="mt-4 grid sm:grid-cols-2 gap-10">
               <Reveal>
               <div>
-                {p.image ? (
-                  <img src={p.image} alt={p.name} className="w-full rounded-2xl" style={{ maxHeight: 480, objectFit: "contain", background: "var(--cream)", border: "1px solid rgba(33,29,26,0.1)" }} />
+                {mainImage ? (
+                  <img src={mainImage} alt={p.name} className="w-full rounded-2xl" style={{ maxHeight: 480, objectFit: "contain", background: "var(--cream)", border: "1px solid rgba(33,29,26,0.1)" }} />
                 ) : (
                   <div className="w-full rounded-2xl flex items-center justify-center border" style={{ aspectRatio: "4/3", borderColor: "rgba(33,29,26,0.1)", background: "var(--cream)" }}>
                     <Stamp product={p} size={110} />
+                  </div>
+                )}
+                {images.length > 1 && (
+                  <div className="flex gap-2 mt-3">
+                    {images.map((img, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setActiveImageIdx(i)}
+                        className="rounded-lg overflow-hidden amrit-focus"
+                        style={{ width: 64, height: 64, border: i === activeImageIdx ? "2px solid var(--gold)" : "1px solid rgba(33,29,26,0.15)" }}
+                      >
+                        <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1847,9 +1945,14 @@ export default function AmritStore() {
               <div>
                 <p style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 1, opacity: 0.6 }}>{p.category} &middot; {p.origin}</p>
                 <h1 className="mt-1" style={{ fontFamily: "Fraunces, serif", fontSize: 32, fontWeight: 600 }}>{p.name}</h1>
-                {p.inStock === false && (
-                  <span className="inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full text-white" style={{ background: "var(--maroon)" }}>Out of stock</span>
-                )}
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {p.inStock === false && (
+                    <span className="inline-block text-xs font-semibold px-3 py-1 rounded-full text-white" style={{ background: "var(--maroon)" }}>Out of stock</span>
+                  )}
+                  {p.bestseller && (
+                    <span className="inline-block text-xs font-semibold px-3 py-1 rounded-full" style={{ background: "var(--gold)", color: "var(--ink)" }}>Bestseller</span>
+                  )}
+                </div>
                 <div className="mt-3"><PriceTag variant={v} align="left" size="lg" /></div>
                 {p.desc && <p className="mt-4 text-sm" style={{ opacity: 0.8, lineHeight: 1.7 }}>{p.desc}</p>}
 
@@ -1889,6 +1992,48 @@ export default function AmritStore() {
 
                 <ProductVideo url={p.videoUrl} />
                 <NutritionPanel nutrition={p.nutrition} keyNutrients={p.keyNutrients} />
+
+                {(() => {
+                  const productReviews = reviews.filter((r) => r.productId === p.id);
+                  const productAvg = productReviews.length
+                    ? productReviews.reduce((s, r) => s + r.rating, 0) / productReviews.length
+                    : 0;
+                  return (
+                    <div className="mt-6 pt-6 border-t" style={{ borderColor: "rgba(33,29,26,0.1)" }}>
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div>
+                          <h3 className="font-semibold" style={{ fontFamily: "Fraunces, serif", fontSize: 18 }}>Reviews</h3>
+                          {productReviews.length > 0 && (
+                            <div className="flex items-center gap-2 mt-1">
+                              <StarRating value={Math.round(productAvg)} size={13} />
+                              <span className="text-xs" style={{ opacity: 0.6 }}>{productAvg.toFixed(1)} from {productReviews.length} review{productReviews.length === 1 ? "" : "s"}</span>
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => { setReviewForm((f) => ({ ...emptyReviewForm(), productId: p.id, productName: p.name })); setReviewSubmitted(false); goTo("reviews"); }}
+                          className="text-xs underline amrit-focus"
+                        >
+                          Write a review
+                        </button>
+                      </div>
+                      {productReviews.length === 0 ? (
+                        <p className="mt-3 text-sm" style={{ opacity: 0.6 }}>No reviews yet for this product — be the first to share one.</p>
+                      ) : (
+                        <div className="mt-4 flex flex-col gap-3">
+                          {productReviews.map((r) => (
+                            <div key={r.id} className="border rounded-xl p-4" style={{ borderColor: "rgba(33,29,26,0.1)" }}>
+                              <StarRating value={r.rating} size={13} />
+                              <p className="mt-1.5 text-sm" style={{ opacity: 0.85, lineHeight: 1.6 }}>{r.text}</p>
+                              {r.image && <img src={r.image} alt="" className="mt-2 rounded-lg" style={{ maxWidth: 160, objectFit: "cover" }} />}
+                              <p className="mt-2 text-xs font-medium" style={{ opacity: 0.6 }}>&mdash; {r.name}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
               </Reveal>
             </div>
@@ -2234,6 +2379,12 @@ export default function AmritStore() {
                 ) : (
                   <>
                     <h3 className="font-semibold mb-3">Write a review</h3>
+                    {reviewForm.productId && (
+                      <div className="mb-3 flex items-center justify-between gap-2 text-xs px-3 py-2 rounded-lg" style={{ background: "var(--ivory)" }}>
+                        <span>Reviewing: <strong>{reviewForm.productName}</strong></span>
+                        <button onClick={() => setReviewForm((f) => ({ ...f, productId: null, productName: "" }))} className="underline amrit-focus shrink-0">Review the store instead</button>
+                      </div>
+                    )}
                     <p className="text-xs mb-1" style={{ opacity: 0.6 }}>Your rating</p>
                     <StarRating value={reviewForm.rating} onChange={(n) => setReviewForm((f) => ({ ...f, rating: n }))} size={22} />
                     <input value={reviewForm.name} onChange={(e) => setReviewForm((f) => ({ ...f, name: e.target.value }))} placeholder="Your name" className="mt-4 w-full border rounded-lg px-3 py-2 text-sm amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }} />
@@ -2490,24 +2641,44 @@ export default function AmritStore() {
                   {draft.inStock ? "In stock" : "Out of stock"}
                 </label>
 
-                <p className="text-xs font-medium mt-1" style={{ opacity: 0.7 }}>Product image</p>
-                <div className="flex items-center gap-3">
-                  <Stamp product={draft.name || draft.image ? draft : { name: "?" }} size={56} />
-                  <div className="flex-1">
-                    <label className="text-xs px-3 py-2 rounded-full border inline-block cursor-pointer amrit-focus" style={{ borderColor: "rgba(33,29,26,0.25)" }}>
-                      {draft.image ? "Replace photo" : "Upload photo"}
+                <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                  <span
+                    onClick={() => setDraft((d) => ({ ...d, bestseller: !d.bestseller }))}
+                    className="relative inline-flex items-center rounded-full"
+                    style={{ width: 40, height: 22, background: draft.bestseller ? "var(--gold)" : "rgba(33,29,26,0.25)", transition: "background .2s" }}
+                  >
+                    <span style={{ position: "absolute", top: 2, left: draft.bestseller ? 20 : 2, width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left .2s" }} />
+                  </span>
+                  Mark as Bestseller
+                </label>
+
+                <p className="text-xs font-medium mt-1" style={{ opacity: 0.7 }}>Product photos (up to 4)</p>
+                <div className="flex flex-wrap gap-2">
+                  {(draft.images || []).map((img, i) => (
+                    <div key={i} className="relative">
+                      <img src={img} alt="" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 10 }} />
+                      {i === 0 && (
+                        <span className="absolute -top-1.5 -left-1.5 text-[9px] font-semibold px-1.5 py-0.5 rounded-full text-white" style={{ background: "var(--ink)" }}>Main</span>
+                      )}
+                      <button
+                        onClick={() => setDraft((d) => ({ ...d, images: d.images.filter((_, idx) => idx !== i) }))}
+                        className="absolute -top-1.5 -right-1.5 rounded-full amrit-focus"
+                        style={{ background: "var(--maroon)", color: "#fff", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" }}
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  ))}
+                  {(draft.images || []).length < 4 && (
+                    <label className="flex items-center justify-center rounded-lg border cursor-pointer amrit-focus" style={{ width: 64, height: 64, borderColor: "rgba(33,29,26,0.25)", borderStyle: "dashed" }}>
+                      <Plus size={18} style={{ opacity: 0.5 }} />
                       <input type="file" accept="image/*" onChange={handleImageFile} className="hidden" />
                     </label>
-                    {draft.image && (
-                      <button onClick={() => setDraft((d) => ({ ...d, image: "" }))} className="ml-2 text-xs underline amrit-focus" style={{ opacity: 0.6 }}>
-                        Remove
-                      </button>
-                    )}
-                  </div>
+                  )}
                 </div>
                 {imageError && <p className="text-xs" style={{ color: "var(--maroon)" }}>{imageError}</p>}
                 <p className="text-xs" style={{ opacity: 0.5, lineHeight: 1.5 }}>
-                  Photos are compressed and stored with the product automatically. No image also works fine — it falls back to a simple letter badge.
+                  The first photo is used as the main image on the Shop page. Add more to build a gallery on the product's own page. No photo also works fine — it falls back to a simple letter badge.
                 </p>
 
                 <p className="text-xs font-medium mt-1" style={{ opacity: 0.7 }}>Product video (optional)</p>
@@ -2924,6 +3095,32 @@ export default function AmritStore() {
                 </label>
               )}
               {heroImageError && <p className="text-xs mt-1" style={{ color: "var(--maroon)" }}>{heroImageError}</p>}
+
+              <p className="text-xs font-medium mt-5 mb-1" style={{ opacity: 0.7 }}>Category images</p>
+              <p className="text-xs mb-3" style={{ opacity: 0.6, lineHeight: 1.5 }}>
+                Give each category a clean tile photo instead of borrowing one product's image. Optional — categories
+                without one just use a simple letter badge or a product photo, like before.
+              </p>
+              <div className="flex flex-col gap-2">
+                {uniqueCategoryTiles.map((p) => (
+                  <div key={p.category} className="flex items-center gap-3 border rounded-lg p-2" style={{ borderColor: "rgba(33,29,26,0.15)" }}>
+                    {categoryImages[p.category] ? (
+                      <img src={categoryImages[p.category]} alt="" style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover" }} />
+                    ) : (
+                      <Stamp product={p} size={44} />
+                    )}
+                    <span className="text-sm flex-1">{p.category}</span>
+                    <label className="text-xs px-3 py-1.5 rounded-full border cursor-pointer amrit-focus" style={{ borderColor: "rgba(33,29,26,0.25)" }}>
+                      {categoryImageProcessing === p.category ? "Processing…" : categoryImages[p.category] ? "Replace" : "Upload"}
+                      <input type="file" accept="image/*" onChange={(e) => handleCategoryImageFile(p.category, e)} className="hidden" />
+                    </label>
+                    {categoryImages[p.category] && (
+                      <button onClick={() => removeCategoryImage(p.category)} className="text-xs underline amrit-focus" style={{ opacity: 0.6 }}>Remove</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {categoryImageError && <p className="text-xs mt-1" style={{ color: "var(--maroon)" }}>{categoryImageError}</p>}
 
               <h3 className="font-semibold mt-6 mb-1">Legal &amp; compliance</h3>
               <p className="text-xs mb-3" style={{ opacity: 0.6 }}>An FSSAI number is required for food businesses in India — add it once issued.</p>
