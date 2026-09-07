@@ -159,6 +159,20 @@ window.ordersApi = {
 };
 
 // ---------- window.reviewsApi (real reviews table) ----------
+function mapReviewRow(row) {
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    name: row.name,
+    rating: row.rating,
+    text: row.text,
+    image: row.image,
+    status: row.status,
+    productId: row.product_id,
+    productName: row.product_name,
+  };
+}
+
 window.reviewsApi = {
   async listApproved() {
     const { data, error } = await supabase
@@ -167,12 +181,12 @@ window.reviewsApi = {
       .eq("status", "approved")
       .order("created_at", { ascending: false });
     if (error) return [];
-    return data || [];
+    return (data || []).map(mapReviewRow);
   },
   async listAll() {
     const { data, error } = await supabase.from("reviews").select("*").order("created_at", { ascending: false });
     if (error) return [];
-    return data || [];
+    return (data || []).map(mapReviewRow);
   },
   async insert(review) {
     const { error } = await supabase.from("reviews").insert({
@@ -181,6 +195,8 @@ window.reviewsApi = {
       text: review.text,
       image: review.image || null,
       status: "pending",
+      product_id: review.productId || null,
+      product_name: review.productName || null,
     });
     if (error) throw error;
   },
