@@ -1104,6 +1104,62 @@ export default function AmritStore() {
     if (bannerDraft.id === id) setBannerDraft(emptyBannerDraft());
   };
 
+  // Coupons
+  const [coupons, setCoupons] = useState([]);
+  const [couponsLoading, setCouponsLoading] = useState(true);
+  const [couponDraft, setCouponDraft] = useState({ id: null, code: "", type: "percent", value: "", active: true });
+  const [couponAdminError, setCouponAdminError] = useState("");
+  const [couponAdminNote, setCouponAdminNote] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get("coupons", true);
+        const loaded = res ? JSON.parse(res.value) : null;
+        setCoupons(Array.isArray(loaded) ? loaded : []);
+      } catch (e) {
+        setCoupons([]);
+      } finally {
+        setCouponsLoading(false);
+      }
+    })();
+  }, []);
+
+  const saveCoupons = async (next) => {
+    setCoupons(next);
+    try {
+      await window.storage.set("coupons", JSON.stringify(next), true);
+      setCouponAdminNote("Saved");
+    } catch (e) {
+      setCouponAdminNote("Could not save — try again");
+    }
+    setTimeout(() => setCouponAdminNote(""), 2000);
+  };
+
+  const saveCouponDraft = () => {
+    setCouponAdminError("");
+    const code = couponDraft.code.trim().toUpperCase();
+    const value = Number(couponDraft.value);
+    if (!code) { setCouponAdminError("Enter a code."); return; }
+    if (!value || value <= 0) { setCouponAdminError("Enter a value greater than 0."); return; }
+    if (couponDraft.type === "percent" && value > 100) { setCouponAdminError("Percent discount can't exceed 100."); return; }
+    const dupe = coupons.find((c) => c.code === code && c.id !== couponDraft.id);
+    if (dupe) { setCouponAdminError("That code already exists."); return; }
+    const cleaned = { id: couponDraft.id || slug(code), code, type: couponDraft.type, value, active: couponDraft.active };
+    const next = couponDraft.id && coupons.some((c) => c.id === couponDraft.id)
+      ? coupons.map((c) => (c.id === cleaned.id ? cleaned : c))
+      : [...coupons, cleaned];
+    saveCoupons(next);
+    setCouponDraft({ id: null, code: "", type: "percent", value: "", active: true });
+  };
+
+  const startEditCoupon = (c) => setCouponDraft({ id: c.id, code: c.code, type: c.type, value: String(c.value), active: c.active });
+  const deleteCoupon = (id) => {
+    saveCoupons(coupons.filter((c) => c.id !== id));
+    if (couponDraft.id === id) setCouponDraft({ id: null, code: "", type: "percent", value: "", active: true });
+  };
+  const toggleCouponActive = (id) => saveCoupons(coupons.map((c) => (c.id === id ? { ...c, active: !c.active } : c)));
+
   // Recipes / "Ways to enjoy" section
   const [recipes, setRecipes] = useState([]);
   const [recipesLoading, setRecipesLoading] = useState(true);
@@ -1290,7 +1346,28 @@ export default function AmritStore() {
   }, [products, cartItems]);
   const subtotal = useMemo(() => cartItems.reduce((s, i) => s + i.price * i.qty, 0), [cartItems]);
   const shipping = subtotal === 0 || subtotal > settings.freeShippingThreshold ? 0 : settings.shippingCharge;
-  const total = subtotal + shipping;
+  const [couponCode, setCouponCode] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState(null);
+  const [couponError, setCouponError] = useState("");
+  const discount = appliedCoupon
+    ? Math.min(subtotal, appliedCoupon.type === "percent" ? Math.round((subtotal * appliedCoupon.value) / 100) : appliedCoupon.value)
+    : 0;
+  const total = Math.max(0, subtotal + shipping - discount);
+
+  const applyCoupon = () => {
+    setCouponError("");
+    const code = couponCode.trim().toUpperCase();
+    if (!code) return;
+    const match = coupons.find((c) => c.code.toUpperCase() === code && c.active);
+    if (!match) {
+      setCouponError("That code isn't valid or has expired.");
+      setAppliedCoupon(null);
+      return;
+    }
+    setAppliedCoupon(match);
+  };
+  const removeCoupon = () => { setAppliedCoupon(null); setCouponCode(""); setCouponError(""); };
+
 
   const addToCart = (product, variantIdx, addQty = 1) => {
     const v = product.variants[variantIdx];
@@ -1323,7 +1400,7 @@ export default function AmritStore() {
       paymentMethod,
       customer: { name: form.name, phone: form.phone, address: form.address, city: form.city, pincode: form.pincode },
       items: cartItems.map((i) => ({ name: i.name, label: i.label, price: i.price, qty: i.qty })),
-      subtotal, shipping, total,
+      subtotal, shipping, discount, couponCode: appliedCoupon?.code || null, total,
       ...extra,
     };
     try {
@@ -1333,6 +1410,7 @@ export default function AmritStore() {
     setPlacing(false);
     setCart({});
     setPaymentMethod("upi");
+    removeCoupon();
     goTo("confirmation");
   };
 
@@ -2201,8 +2279,40 @@ export default function AmritStore() {
                   <span>{rupee(i.price * i.qty)}</span>
                 </div>
               ))}
-              <div className="border-t mt-3 pt-3 flex justify-between font-semibold" style={{ borderColor: "rgba(33,29,26,0.12)" }}>
-                <span>Total</span><span>{rupee(total)}</span>
+
+              <div className="mt-3">
+                {appliedCoupon ? (
+                  <div className="flex items-center justify-between text-xs rounded-lg px-3 py-2" style={{ background: "rgba(30,82,69,0.08)", color: "var(--forest)" }}>
+                    <span>Code <strong>{appliedCoupon.code}</strong> applied</span>
+                    <button onClick={removeCoupon} className="underline amrit-focus">Remove</button>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      value={couponCode}
+                      onChange={(e) => setCouponCode(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && applyCoupon()}
+                      placeholder="Coupon code"
+                      className="flex-1 border rounded-lg px-3 py-2 text-sm amrit-focus"
+                      style={{ borderColor: "rgba(33,29,26,0.2)" }}
+                    />
+                    <button onClick={applyCoupon} className="text-sm px-4 py-2 rounded-lg font-medium amrit-focus border" style={{ borderColor: "rgba(33,29,26,0.2)" }}>
+                      Apply
+                    </button>
+                  </div>
+                )}
+                {couponError && <p className="text-xs mt-1" style={{ color: "var(--maroon)" }}>{couponError}</p>}
+              </div>
+
+              <div className="border-t mt-3 pt-3" style={{ borderColor: "rgba(33,29,26,0.12)" }}>
+                <div className="flex justify-between text-sm"><span style={{ opacity: 0.7 }}>Subtotal</span><span>{rupee(subtotal)}</span></div>
+                <div className="flex justify-between text-sm mt-1"><span style={{ opacity: 0.7 }}>Delivery</span><span>{shipping === 0 ? "Free" : rupee(shipping)}</span></div>
+                {discount > 0 && (
+                  <div className="flex justify-between text-sm mt-1" style={{ color: "var(--forest)" }}><span>Discount ({appliedCoupon.code})</span><span>&minus;{rupee(discount)}</span></div>
+                )}
+                <div className="flex justify-between mt-3 font-semibold" style={{ borderTop: "1px solid rgba(33,29,26,0.12)", paddingTop: 12 }}>
+                  <span>Total</span><span>{rupee(total)}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -2571,6 +2681,13 @@ export default function AmritStore() {
               style={{ borderBottom: adminTab === "recipes" ? "2px solid var(--gold)" : "2px solid transparent", opacity: adminTab === "recipes" ? 1 : 0.6 }}
             >
               Recipes
+            </button>
+            <button
+              onClick={() => setAdminTab("coupons")}
+              className="px-4 py-2 text-sm font-medium amrit-focus"
+              style={{ borderBottom: adminTab === "coupons" ? "2px solid var(--gold)" : "2px solid transparent", opacity: adminTab === "coupons" ? 1 : 0.6 }}
+            >
+              Coupons
             </button>
             <button
               onClick={() => setAdminTab("reviews")}
@@ -2952,6 +3069,97 @@ export default function AmritStore() {
                           </div>
                           <button onClick={() => startEditRecipe(r)} className="text-xs underline amrit-focus">Edit</button>
                           <button onClick={() => deleteRecipe(r.id)} className="amrit-focus" style={{ opacity: 0.5 }}><Trash2 size={16} /></button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {adminTab === "coupons" && (
+            <div className="mt-8">
+              <p className="text-sm mb-1" style={{ opacity: 0.7, lineHeight: 1.6 }}>
+                Codes customers can apply at checkout for a discount. Turn a code off anytime without deleting it.
+              </p>
+              <div className="text-xs mb-6" style={{ fontFamily: "'IBM Plex Mono', monospace", opacity: 0.55 }}>
+                {couponAdminNote || (couponsLoading ? "Loading…" : "")}
+              </div>
+
+              <div className="grid sm:grid-cols-5 gap-8">
+                <div className="sm:col-span-2 border rounded-2xl p-5" style={{ borderColor: "rgba(33,29,26,0.12)", background: "var(--cream)" }}>
+                  <h3 className="font-semibold mb-4">{couponDraft.id ? "Edit coupon" : "Add coupon"}</h3>
+                  <div className="flex flex-col gap-3">
+                    <input
+                      value={couponDraft.code}
+                      onChange={(e) => setCouponDraft((d) => ({ ...d, code: e.target.value.toUpperCase() }))}
+                      placeholder="CODE (e.g. WELCOME10)"
+                      className="border rounded-lg px-3 py-2 text-sm amrit-focus"
+                      style={{ borderColor: "rgba(33,29,26,0.2)", fontFamily: "'IBM Plex Mono', monospace" }}
+                    />
+                    <div className="flex gap-2">
+                      <select
+                        value={couponDraft.type}
+                        onChange={(e) => setCouponDraft((d) => ({ ...d, type: e.target.value }))}
+                        className="flex-1 border rounded-lg px-3 py-2 text-sm amrit-focus"
+                        style={{ borderColor: "rgba(33,29,26,0.2)" }}
+                      >
+                        <option value="percent">% off</option>
+                        <option value="flat">₹ flat off</option>
+                      </select>
+                      <input
+                        value={couponDraft.value}
+                        onChange={(e) => setCouponDraft((d) => ({ ...d, value: e.target.value.replace(/[^0-9]/g, "") }))}
+                        placeholder={couponDraft.type === "percent" ? "e.g. 10" : "e.g. 100"}
+                        className="flex-1 border rounded-lg px-3 py-2 text-sm amrit-focus"
+                        style={{ borderColor: "rgba(33,29,26,0.2)" }}
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                      <span
+                        onClick={() => setCouponDraft((d) => ({ ...d, active: !d.active }))}
+                        className="relative inline-flex items-center rounded-full"
+                        style={{ width: 40, height: 22, background: couponDraft.active ? "var(--forest)" : "rgba(33,29,26,0.25)", transition: "background .2s" }}
+                      >
+                        <span style={{ position: "absolute", top: 2, left: couponDraft.active ? 20 : 2, width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left .2s" }} />
+                      </span>
+                      {couponDraft.active ? "Active" : "Inactive"}
+                    </label>
+                    {couponAdminError && <p className="text-xs" style={{ color: "var(--maroon)" }}>{couponAdminError}</p>}
+                    <div className="flex gap-2 mt-1">
+                      <button onClick={saveCouponDraft} className="flex-1 py-2.5 rounded-full font-semibold text-sm amrit-focus" style={{ background: "var(--ink)", color: "var(--ivory)" }}>
+                        {couponDraft.id ? "Save changes" : "Add coupon"}
+                      </button>
+                      {couponDraft.id && (
+                        <button onClick={() => setCouponDraft({ id: null, code: "", type: "percent", value: "", active: true })} className="px-4 py-2.5 rounded-full text-sm border amrit-focus" style={{ borderColor: "rgba(33,29,26,0.2)" }}>Cancel</button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="sm:col-span-3">
+                  <h3 className="font-semibold mb-4">Coupons ({coupons.length})</h3>
+                  {coupons.length === 0 ? (
+                    <p className="text-sm" style={{ opacity: 0.6 }}>No coupons yet.</p>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {coupons.map((c) => (
+                        <div key={c.id} className="border rounded-xl p-4 flex items-center gap-4" style={{ borderColor: "rgba(33,29,26,0.12)" }}>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{c.code}</span>
+                              <span className="text-[10px] text-white px-2 py-0.5 rounded-full" style={{ background: c.active ? "var(--forest)" : "rgba(33,29,26,0.4)" }}>
+                                {c.active ? "ACTIVE" : "OFF"}
+                              </span>
+                            </div>
+                            <p className="text-xs mt-1" style={{ opacity: 0.6 }}>
+                              {c.type === "percent" ? `${c.value}% off` : `${rupee(c.value)} off`}
+                            </p>
+                          </div>
+                          <button onClick={() => toggleCouponActive(c.id)} className="text-xs underline amrit-focus">{c.active ? "Turn off" : "Turn on"}</button>
+                          <button onClick={() => startEditCoupon(c)} className="text-xs underline amrit-focus">Edit</button>
+                          <button onClick={() => deleteCoupon(c.id)} className="amrit-focus" style={{ opacity: 0.5 }}><Trash2 size={16} /></button>
                         </div>
                       ))}
                     </div>
